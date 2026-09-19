@@ -222,13 +222,19 @@ In-session, conversation-scoped state recording which content hashes have alread
 supplied, used only to avoid duplicate intervention.
 _Avoid_: dedupe cache, history
 
+**Lease**:
+A session-scoped permission to keep supplying a Skill without a fresh Judgment. Not used:
+authority is per-turn and the Session Ledger is evidence, not permission.
+_Avoid_: session grant, sticky grant
+
 **Route Decision**:
 The complete record of one routing outcome: request identity, profile, candidates,
 Judgment, policy result, grants, hashes, limits, reasons, timing, and model usage.
 _Avoid_: trace, selection event
 
 **Evidence Log**:
-The durable, append-only store of Route Decisions.
+The durable, append-only store of Route Decisions, holding metadata and content hashes rather
+than request text.
 _Avoid_: ledger, telemetry
 
 ### The system
