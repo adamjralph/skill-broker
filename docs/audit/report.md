@@ -2,8 +2,9 @@
 
 **Status:** audit artifact for the Skill Store build (wayfinder [#24 — Produce the Stage 1
 verified audit](https://github.com/adamjralph/skill-broker/issues/24)). Findings and proposals
-only; every conflict below is Adam's to decide. **No filesystem change was made**: nothing was
-moved, rewritten, or deleted.
+only; every conflict below is Adam's to decide. The audit itself made no filesystem change;
+the two stale references it found were removed afterwards on Adam's instruction (see
+[Cross-skill references](#cross-skill-references)).
 
 **Companion:** [`index.json`](./index.json) — the machine-readable index, one row per
 Skill identity-version. **Reproduce:** `python3 scripts/skill_audit.py` (writes the index);
