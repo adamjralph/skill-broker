@@ -7,6 +7,11 @@ namespaced by owner/collection, with a generated manifest carrying package hashe
 runtime caches and snapshot archives are excluded, and **project-scoped skills stay
 project-owned**, wired by a per-project setup script or skill.
 
+Concretely, `~/Projects/manor-ai` is **excluded** as both a store source and a store
+consumer; its skills are wired by its own project setup path (#16), exactly as
+`stillroom-client-acquisition` is. It must not be reintroduced into the store or the broker's
+catalog.
+
 _Considered options_: extending `~/Documents/skills-archive` — rejected, it is not a superset
 (332 of 585 contents absent) and mixes an archive with embedded upstream checkouts; hosting
 inside the Hermes workspace — rejected, it would make one agent the owner of a cross-agent
