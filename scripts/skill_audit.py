@@ -29,7 +29,7 @@ REPO = Path(__file__).resolve().parent.parent
 EXCLUDED_DIR_NAMES = {
     ".git", ".github", ".hub", ".archive", ".curator_backups", "node_modules",
     "__pycache__", ".cache", ".venv", "venv", ".mypy_cache", ".pytest_cache",
-    ".ruff_cache", ".tox", ".hg", ".svn", ".DS_Store",
+    ".ruff_cache", ".tox", ".hg", ".svn", ".DS_Store", ".gitkeep",
 }
 EXCLUDED_SUFFIXES = {".pyc", ".pyo"}
 
