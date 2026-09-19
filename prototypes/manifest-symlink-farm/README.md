@@ -99,16 +99,18 @@ Three things are demonstrated:
 The fixture is synthetic on purpose (it proves the mechanism without vendoring
 third-party skill content). These are the real machine variants it is shaped
 from — `SKILL.md` and canonical package hashes, from the audit, **manor-ai
-excluded**:
+excluded**. **Source class** follows ADR-0009: a *derived* copy (runtime cache,
+plugin cache, snapshot archive) is evidence, not a Canonical Source, so its
+variant is *pending a canonical source* and not yet admissible.
 
-| name | id (owner namespace) | real path | SKILL.md | package |
-|---|---|---|---|---|
-| pdf | `openai.pdf` | `~/.codex/plugins/cache/openai-primary-runtime/pdf/*/skills/pdf` | `afc4472ec4d6` | `39ea3721e79e` |
-| pdf | `nousresearch.pdf` | `~/.hermes/hermes-agent/skills/productivity/pdf` (+ profile, shelf) | `c16b9c159a3a` | `e042958d7fbb` |
-| skill-creator | `openai.skill-creator` | `~/.codex/skills/.system/skill-creator` | `6656e5475563` | `637c8ac89eb8` |
-| skill-creator | `bb.skill-creator` | `~/.bb/runtime/global-skills/<sha>/skills/skill-creator` | `d33bedeb1f3a` | `6cf6fcb5a66d` |
-| tdd | `mattpocock.tdd` | `~/Documents/skills-archive/skills/skills/engineering/tdd` (+ `~/Work/.agents/skills/tdd`, identical) | `cb01f66bebfa` | `19c1f265f65c` |
-| tdd | `cursor.tdd` | `~/Documents/skills-archive/pstack/skills/tdd` | `adad031f9e79` | `f8a1b18995b1` |
+| name | id (owner namespace) | real path | source class | SKILL.md | package |
+|---|---|---|---|---|---|
+| pdf | `openai.pdf` | `~/.codex/plugins/cache/openai-primary-runtime/pdf/*/skills/pdf` | derived — pending source | `afc4472ec4d6` | `39ea3721e79e` |
+| pdf | `nousresearch.pdf` | `~/.hermes/hermes-agent/skills/productivity/pdf` (+ profile, shelf) | canonical (Hermes git) | `c16b9c159a3a` | `e042958d7fbb` |
+| skill-creator | `openai.skill-creator` | `~/.codex/skills/.system/skill-creator` | canonical (`openai/skills`) | `6656e5475563` | `637c8ac89eb8` |
+| skill-creator | `bb.skill-creator` | `~/.bb/runtime/global-skills/<sha>/skills/skill-creator` | derived — pending source | `d33bedeb1f3a` | `6cf6fcb5a66d` |
+| tdd | `mattpocock.tdd` | `~/Documents/skills-archive/skills/skills/engineering/tdd` (+ `~/Work/.agents/skills/tdd`, identical) | canonical (git) | `cb01f66bebfa` | `19c1f265f65c` |
+| tdd | `cursor.tdd` | `~/Documents/skills-archive/pstack/skills/tdd` | derived/snapshot — pending source | `adad031f9e79` | `f8a1b18995b1` |
 
 `docx` and `xlsx` were only same-name collisions because of manor-ai; with
 manor-ai excluded they have a single identity each (Hermes), so they are not
