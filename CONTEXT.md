@@ -14,9 +14,49 @@ A reusable instruction package identified by a stable ID, maintained at one cano
 source, with metadata and zero or more dependencies.
 _Avoid_: capability, tool, plugin, prompt
 
+**Name**:
+The human label a Skill carries, taken from its frontmatter `name`. Not unique and never an
+identity: two distinct Skills may share one Name.
+_Avoid_: id, key, slug
+
+**ID**:
+The immutable, namespaced identifier of a Skill, `<owner>.<name>`. Assigned by the Skill Store;
+never read from the Skill's own frontmatter.
+_Avoid_: name, slug, hash
+
+**Owner**:
+The upstream publisher whose namespace a Skill's ID carries. A maintained tree with no
+discoverable upstream supplies a Pseudo-owner in its place.
+_Avoid_: consumer, tool, profile
+
+**Pseudo-owner**:
+The owner namespace for content with no discoverable upstream: the tree or profile that
+maintains it (`work`, `agents`, `hermes_engineer`, `local`).
+_Avoid_: local owner, fake owner
+
+**Provenance**:
+The recorded origin of a Skill: its Owner plus the upstream repository and commit.
+_Avoid_: source (that is the Canonical Source)
+
+**Version**:
+The canonical package hash of one Skill's content over its normalized file set. The second
+element of a Resolved Skill Version.
+_Avoid_: release, tag, revision
+
 **Resolved Skill Version**:
-One Skill at a specific content hash. The unit a Grant authorises and delivery verifies.
+One Skill at a specific Version — its ID plus its package hash. The unit a Grant authorises
+and delivery verifies.
 _Avoid_: skill copy, snapshot, file
+
+**Local Patch**:
+The recorded fact that a Skill's canonical content deliberately diverges from its upstream
+commit. A Local Patch produces a new Version of the same identity.
+_Avoid_: fork, edit, mod
+
+**Fork**:
+A declared attribution of no-upstream content to a known upstream Owner, so its divergences are
+Local Patches of that Owner's identity rather than new identities.
+_Avoid_: copy, mirror
 
 **Canonical Source**:
 The single authoritative location from which a Skill is maintained and updated.
@@ -28,8 +68,12 @@ references and metadata, never content copies.
 _Avoid_: library, index, registry
 
 **Alias**:
-A second name for one Skill identity.
+A second name for one Skill identity. An Alias is a Name, never an ID.
 _Avoid_: duplicate, redirect
+
+**Name Collision**:
+Two distinct Skill identities that share a Name. Expected and legitimate.
+_Avoid_: conflict, clash, duplicate
 
 **Duplicate**:
 Two distinct Skill identities that overlap in content or purpose. A migration defect, not
