@@ -1,10 +1,13 @@
 # Stage 1 verified audit
 
 **Status:** audit artifact for the Skill Store build (wayfinder [#24 — Produce the Stage 1
-verified audit](https://github.com/adamjralph/skill-broker/issues/24)). Findings and proposals
-only; every conflict below is Adam's to decide. The audit itself made no filesystem change;
-the two stale references it found were removed afterwards on Adam's instruction (see
-[Cross-skill references](#cross-skill-references)).
+verified audit](https://github.com/adamjralph/skill-broker/issues/24)), regenerated under the
+identity and admission decisions of [Resolve the Stage 1 audit's identity and admission
+conflicts](https://github.com/adamjralph/skill-broker/issues/28) (ADR-0016/0017; re-run in
+[Re-run the Stage 1 audit under the decided identity and admission policy](https://github.com/adamjralph/skill-broker/issues/29)).
+The audit made no filesystem change; the two stale references it found were removed
+afterwards on Adam's instruction (see [Cross-skill references](#cross-skill-references)).
+No conflict remains open.
 
 **Companion:** [`index.json`](./index.json) — the machine-readable index, one row per
 Skill identity-version. **Reproduce:** `python3 scripts/skill_audit.py` (writes the index);
@@ -13,16 +16,18 @@ against the committed index).
 
 | Re-verification | Result |
 | --- | --- |
-| Identity-version hashes re-checked | **436 / 436** |
-| Exposure paths re-checked (realpath → package hash) | **773 / 773** |
+| Identity-version hashes re-checked | **430 / 430** |
+| Exposure paths re-checked (realpath → package hash) | **725 / 725** |
 
 ## Scope
 
-In scope, per [ADR-0008](../../docs/adr/0008-skill-store-hosting-and-scope.md): **authored
-skills across every consumer** — Hermes runtime and agent tooling alike. Excluded: derived
-runtime caches, snapshot archives, and project-scoped skills.
+In scope, per [ADR-0008](../../docs/adr/0008-skill-store-hosting-and-scope.md) as amended by
+[ADR-0017](../../docs/adr/0017-service-repo-skills-are-excluded-and-licence-is-recorded-per-identity.md):
+**authored skills across every consumer** — Hermes runtime and agent tooling alike.
+Excluded: derived runtime caches, snapshot archives, project-scoped skills, and
+service-repo-owned skills.
 
-### In-scope roots (27)
+### In-scope roots (24)
 
 | Root | Category | Owner | Provenance |
 | --- | --- | --- | --- |
@@ -32,13 +37,12 @@ runtime caches, snapshot archives, and project-scoped skills.
 | `.hermes/profiles/*/skills` (10 profiles) | hermes_profile | per-profile pseudo-owner | profile writable tier |
 | `Documents/skills-archive/skills` | upstream_checkout | `mattpocock` | mattpocock/skills @ `c55ee46` (MIT) |
 | `Documents/skills-archive/marketingskills` | upstream_checkout | `coreyhaines31` | coreyhaines31/marketingskills @ `884027c` (MIT; origin `5b2c000`, one local commit) |
-| `Documents/skills-archive/pstack` | upstream_plugin | `cursor` | Cursor `pstack`; no `.git` (MIT) |
+| `Documents/skills-archive/pstack` | upstream_plugin | `poteto` | pstack author Lauren Tan (`poteto`); hosted in the `cursor/plugins` monorepo (MIT) |
 | `.codex/skills` | agent_tooling | `openai` | openai/skills `.system` (MIT) |
-| `Work/.agents/skills` | agent_tooling | `work` | no discoverable upstream |
+| `Work/.agents/skills` | agent_tooling | `mattpocock` (declared Fork) | Fork of mattpocock/skills @ `c55ee46`; same-name content is a Local Patch (ADR-0016) |
 | `.agents/skills` | agent_tooling | `agents` | symlink farm into the above |
 | `Documents/stillroom-wiki/skills` | content | `stillroom` | Hermes `external_dirs` |
 | `Documents/life-os` | content | `life-os` | Life OS vault |
-| `honcho`, `services/honcho`, `honcho-assessment` | service_repo | `plastic-labs` | plastic-labs/honcho @ `699c993` |
 | `/usr/share/omarchy/default/agents/skills` | os_provided | `omarchy` | OS-provided |
 | `.claude/skills`, `.pi/agent/skills` | agent_tooling | `claude`, `pi` | symlink farms (all targets resolve in-scope) |
 
@@ -57,12 +61,14 @@ These stay project-owned and are wired by the project-setup path
 ([Define the project-scoped skill setup path](https://github.com/adamjralph/skill-broker/issues/16)).
 They must not enter the store or the broker catalog.
 
-### Excluded roots (9), with reason
+### Excluded roots (12), with reason
 
 `~/research` and `~/backups`, `~/.hermes/backups`, `~/.hermes/reports` (snapshot archives);
 `~/Documents/skills-archive` outside the three checkouts above (snapshot archive);
 `~/.bb/runtime/global-skills`, `~/.bb/runtime/skill-store` (BB derived caches);
-`~/.codex/plugins` (plugin cache); `~/Downloads` (ad-hoc, not an authored root).
+`~/.codex/plugins` (plugin cache); `~/Downloads` (ad-hoc, not an authored root); and the
+three honcho service-repo roots (`~/honcho`, `~/services/honcho`, `~/honcho-assessment`) —
+service-repo-owned and AGPL-3.0, not Adam-authored (ADR-0017).
 
 ## Method
 
@@ -87,39 +93,41 @@ They must not enter the store or the broker catalog.
 
 | Measure | Value |
 | --- | ---: |
-| In-scope exposures | 773 (122 via symlink) |
-| Distinct canonical realpaths | 651 |
-| **Identity-versions (`package_sha256`)** | **436** |
-| Distinct IDs (`<owner>.<name>`) | 436 |
-| Redundant copies | 215 |
+| In-scope exposures | 725 (92 via symlink) |
+| Distinct canonical realpaths | 633 |
+| **Identity-versions (`package_sha256`)** | **430** |
+| Distinct IDs (`<owner>.<name>`) | 415 |
+| Redundant copies | 203 |
 | Project-scoped skills (excluded) | 62 |
-| Names carried by more than one owner (legitimate Name Collision) | 30 |
+| Names carried by more than one owner (legitimate Name Collision) | 15 |
 | Cross-skill references found | 14 across 8 identities |
 | Dangling reference targets | 0 (two stale references removed) |
-| Local patches detected | 1 |
+| Local patches detected | 14 (13 mattpocock Fork patches + marketingskills `prospecting`) |
+| Stale profile copies (superseded versions) | 2 |
 
-The library is ~436 real skills wearing 773 paths; 215 paths are copies.
+The library is ~415 distinct identities wearing 725 exposures; 203 paths are copies, and
+13 of those are the declared mattpocock Fork's Local Patches.
 
 ### Inventory by owner
 
 | Owner | Skills | License |
 | --- | ---: | --- |
 | `nousresearch` (Hermes builtin + optional) | 205 | MIT |
-| `hermes_engineer` | 52 | — |
 | `coreyhaines31` | 50 | MIT |
-| `cursor` | 48 | MIT (attribution unresolved) |
-| `mattpocock` | 38 | MIT |
-| `work` | 13 | — |
-| `life-os` | 8 | — |
-| `plastic-labs` | 6 | — (not recorded) |
-| `local` (agent-authored, default profile) | 5 | — |
+| `hermes_engineer` | 50 | `LicenseRef-Proprietary` |
+| `poteto` (pstack) | 48 | MIT |
+| `mattpocock` (+13 Fork patches) | 38 | MIT |
+| `life-os` | 8 | `LicenseRef-Proprietary` |
 | `openai` | 6 | MIT |
-| `agents` | 2 | — |
-| `omarchy` | 2 | — |
-| `stillroom` | 1 | — |
+| `local` (agent-authored, shared shelf) | 5 | `LicenseRef-Proprietary` |
+| `agents` | 2 | unresolved (resolve at vendoring) |
+| `omarchy` | 2 | unresolved (resolve at vendoring) |
+| `stillroom` | 1 | `LicenseRef-Proprietary` |
 
-Upstream-derived content is MIT (347 identities). 89 identities have **no recorded license** —
-all pseudo-owner or service-repo content; this is a conflict below.
+Upstream-derived content is MIT (360 identity-versions, including the 13 Fork patches, which
+keep their upstream licence). Adam-authored content records `LicenseRef-Proprietary` (66);
+four identities (`agents`, `omarchy`) have no recorded licence and are resolved per source
+when vendored (ADR-0017). The AGPL-3.0 honcho skills are excluded.
 
 ### Redundancy
 
@@ -127,10 +135,9 @@ Near-pure copy roots (redundant copies of content that is canonical elsewhere):
 
 | Root | Exposures | Redundant copies |
 | --- | ---: | ---: |
-| `.hermes/skills` | 116 | 108 |
+| `.hermes/skills` | 116 | 107 |
 | `.hermes/profiles/hermes_engineer/skills` | 117 | 63 |
 | `Work/.agents/skills` | 37 | 24 |
-| `honcho` / `services/honcho` | 32 | 12 |
 
 The symlink farms (`.agents/skills`, `.codex/skills`, `.claude/skills`, `.pi/agent/skills`)
 resolve into the canonical roots above and add no distinct content.
@@ -158,7 +165,7 @@ profile-relative, so the Profile Policy remains the source of truth. The heurist
 | Proposed | Count |
 | --- | ---: |
 | foundation | 39 |
-| brokered | 371 |
+| brokered | 365 |
 | retirement-candidate | 26 |
 
 The 26 retirement candidates are exactly the zero-use `stale` records in
@@ -170,77 +177,44 @@ Stage 9 review.
 cannot distinguish divergent same-name copies. The index carries `ambiguous_same_name` on every
 usage record; the heuristic abstains when it is set.
 
-## Conflicts surfaced for Adam's decision
+## Decisions applied (wayfinder #28)
 
-### 1. `cursor` owner attribution (`cursor.*`, 48 skills)
+The conflicts this audit surfaced were resolved by Adam on 2026-09-20 and recorded in
+[ADR-0016](../adr/0016-divergence-resolves-by-declared-forks-and-consumers-never-patch-shared-identities.md)
+and
+[ADR-0017](../adr/0017-service-repo-skills-are-excluded-and-licence-is-recorded-per-identity.md).
+None remains open: `index.json` carries a `policy` block restating them, and every conflict row
+carries `requires_decision: false` with its `decision`.
 
-`Documents/skills-archive/pstack` has no `.git`. Its `.cursor-plugin/plugin.json` names
-**Lauren Tan**; its README names **"poteto"**. Proposed owner `cursor` (repo path) is
-provisional. *Decide:* `cursor`, `poteto`, or a `pstack` pseudo-owner.
+1. **pstack owner — `poteto`.** `cursor/plugins` is a multi-author distribution monorepo;
+   pstack's author is Lauren Tan (`poteto`). The 48 identities carry `poteto.*`, not `cursor.*`.
+2. **`Work/.agents/skills` — declared Fork of `mattpocock/skills`.** The 13 flagged names are
+   mattpocock content with small local edits; each is a Local Patch Version of its
+   `mattpocock.*` identity, with the Work path as `patch_source`, not a distinct `work.*`
+   identity. No `work.*` IDs are minted.
+3. **Profile deviations — distinct identities.** A Hermes profile is a Consumer, and a shared
+   patch would leak a profile's customisation into every other profile resolving that identity.
+   `hermes_engineer.hermes-agent` and `hermes_engineer.handoff`, together with the seven
+   already-reconciled variants, stay distinct.
+4. **Five shelf-vs-profile names.** The shared shelf (`local`) is canonical. The
+   deliberately-maintained profile variants — `agent-skill-library-management`,
+   `multi-agent-profile-workflows`, `life-os` — are distinct `hermes_engineer.*` identities.
+   The stale `hermes_engineer` copies of `adam-content-writing` and `linkedin-post-writing` are
+   recorded as superseded Versions of `local.*`; the pilot's brokered ID is
+   `local.adam-content-writing`.
+5. **Service-repo skills — excluded.** The six `plastic-labs/honcho` skills are upstream
+   content consumed only inside honcho checkouts, and the repository is AGPL-3.0. They stay
+   repo-owned; `honcho-memory`'s two Versions are therefore moot.
+6. **Licence convention.** Authored content records `LicenseRef-Proprietary`; vendored upstream
+   records its SPDX id plus notice; `agents` and `omarchy` are resolved per source at vendoring;
+   the store carries a top-level `LICENSE` and a `NOTICE`.
+7. **Already settled, no decision.** `coreyhaines31.prospecting` is admitted as a patched
+   Version preserving its ACMA edit; the two dangling references (`diagramming`, `data-science`)
+   were removed as stale.
 
-### 2. Same-name divergences in `Work/.agents/skills` (13 identities)
-
-`Work/.agents/skills` holds engineering skills with **no discoverable upstream** whose names
-collide with mattpocock/skills content that differs: `implement`,
-`improve-codebase-architecture`, `prototype`, `resolving-merge-conflicts`,
-`setup-matt-pocock-skills`, `triage`, `wayfinder`, `wizard`, `implement-spec`, `retro`,
-`git-guardrails-claude-code`, `scaffold-exercises`, `setup-pre-commit`. *Decide per skill:*
-distinct `work.*` identity, or a **patched version of the mattpocock identity**
-(ADR-0009 `local_patch`). The audit currently proposes distinct `work.*` identities.
-
-### 3. Hermes shelf-vs-profile divergences (5 names)
-
-Agent-authored names that exist with **different content** in both the default shelf
-(pseudo-owner `local`) and the `hermes_engineer` profile:
-
-`agent-skill-library-management`, `multi-agent-profile-workflows`, `life-os`,
-`adam-content-writing`, `linkedin-post-writing`.
-
-`adam-content-writing` is in the broker pilot's brokered set
-([Choose the broker pilot's profile, foundation set, and brokered set](https://github.com/adamjralph/skill-broker/issues/12)),
-so this one blocks the pilot's identity choice. *Decide:* which is canonical, or whether the
-profile copy is a patched version.
-
-### 4. Unreconciled `hermes_engineer` divergences (2)
-
-The other profile divergences are already reconciled as intentional
-(`docs/research/divergence-reconciliation.md`). Two are not covered there:
-`hermes_engineer.hermes-agent` and `hermes_engineer.handoff`. *Decide:* intentional profile
-divergence (preserve) or distinct identity.
-
-### 5. `plastic-labs.honcho-memory` — one identity, two divergent versions
-
-`honcho-assessment/examples/zo` and `honcho-assessment/skills/honcho-memory` share a name and
-differ in content. *Decide:* which is canonical; the other is a patched version or a distinct
-identity.
-
-### 6. Dangling references — resolved
-
-`diagramming` and `data-science` were referenced by `research-paper-writing` but present
-nowhere. Adam ruled them stale; the reference rows were removed from all three
-`research-paper-writing` variants (`nousresearch`, `hermes_engineer`, `local`). No references
-dangle.
-
-### 7. Service-repo skills in scope?
-
-`plastic-labs/honcho` contributes 6 skills that are authored but not obviously consumed by any
-agent skill loader. ADR-0008 says "authored skills across every consumer", which admits them.
-*Confirm:* in scope, or excluded like project-scoped.
-
-### 8. Licensing for pseudo-owner content
-
-89 identities have no recorded license (all `work`, `hermes_engineer`, `local`, `life-os`,
-`agents`, `omarchy`, `stillroom`, `plastic-labs`). Upstream-derived content is MIT and carries
-its notice. *Decide:* the license/notice convention for locally-authored and service-repo
-content before vendoring.
-
-### 9. marketingskills local patch
-
-`coreyhaines31.prospecting` carries a local commit ahead of `origin/main`
-(`skills/prospecting/references/compliance.md`, ACMA section). The audit records
-`local_patch: true` on this identity. *Confirm:* admit as a patched version of the upstream
-identity, preserving the edit (ADR-0009;
-[Decide how upstream updates and local patches reconcile inside the store](https://github.com/adamjralph/skill-broker/issues/19)).
+Effect: distinct identities 436 → **415**; identity-versions 436 → **430**; owner
+`cursor` → `poteto`. The corrected inventory is consumed by
+[Stand up the Skill Store repository](https://github.com/adamjralph/skill-broker/issues/25).
 
 ## Limitations
 
@@ -251,9 +225,13 @@ identity, preserving the edit (ADR-0009;
 - **Excluded archives were not walked.** Content known only as a derived copy or archive
   snapshot is not admitted (ADR-0009) and does not appear in the index; the excluded roots are
   listed above.
-- **Symlinked roots are resolved.** `.codex/skills` (37 of 45), `.agents/skills`,
-  `.claude/skills`, `.pi/agent/skills`, and the honcho `.claude`/`.agents` sub-farms resolve
-  into other in-scope roots; they add exposures, not identities.
+- **Symlinked roots are resolved.** `.codex/skills` (45 exposures), `.agents/skills`,
+  `.claude/skills`, `.pi/agent/skills` resolve into other in-scope roots; they add exposures,
+  not identities.
+- **Declared Fork patches.** The 13 `mattpocock.*` Local Patches have their `canonical_source`
+  in `Work/.agents/skills` and their provenance pinned to the mattpocock upstream commit
+  (ADR-0016); two stale `hermes_engineer` copies are recorded as superseded versions of the
+  `local.*` identity.
 - **Package-hash normalization** excludes VCS metadata, dependency and cache directories, and
   `__pycache__`/bytecode. Two packages differing only in those are one version.
 

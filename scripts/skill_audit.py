@@ -4,7 +4,9 @@
 Scope, identity, and hashing rules come from ADR-0008 (authored skills across every
 consumer; derived caches, snapshot archives, and project-scoped skills excluded) and
 ADR-0009 (``<owner>.<name>`` identity, package-hash version, ``SKILL.md`` hash as a
-separate index field).
+separate index field), as amended by ADR-0016 (declared Forks resolve divergence; a
+Consumer never patches a shared identity) and ADR-0017 (service-repo skills are excluded;
+licence is recorded per identity).
 
 Read-only against the skill trees. Writes ``docs/audit/index.json`` in this repo.
 """
@@ -43,6 +45,25 @@ RESOLVED_PROFILE_DIVERGENCES = {
     "pydantic-graph-workflows", "typesafe-ai",
 }
 
+# --- decisions applied from #28 (ADR-0016 / ADR-0017) -----------------------
+
+# A declared Fork: the whole tree is an edited copy of an upstream, so its same-name
+# content is a Local Patch version of the upstream identity, not a new identity.
+FORK_OWNER = {"mattpocock/skills": "mattpocock"}
+
+# Profile-scoped same-name divergences decided to remain distinct identities (ADR-0016).
+# Every `hermes_engineer.*` deviation is profile-scoped, so none is a patch of the
+# shared upstream identity.
+PROFILE_DIVERGENCES_DISTINCT = RESOLVED_PROFILE_DIVERGENCES | {"hermes-agent", "handoff"}
+
+# Stale profile copies of a shared-shelf skill: not identities, only older Versions of
+# the canonical `local.*` identity (ADR-0016).
+STALE_PROFILE_COPIES = {"adam-content-writing", "linkedin-post-writing"}
+
+# Pseudo-owners whose content is Adam-authored (ADR-0017 licence convention).
+AUTHORED_OWNERS = {"local", "hermes_engineer", "life-os", "stillroom", "work"}
+AUTHORED_LICENSE = "LicenseRef-Proprietary"
+
 
 def git(args: list[str], cwd: Path) -> str | None:
     try:
@@ -55,7 +76,7 @@ def git(args: list[str], cwd: Path) -> str | None:
 def root(path: str, category: str, scope: str, owner: str | None,
          repo: str | None = None, git_root: str | None = None,
          license_: str | None = None, priority: int = 50, kind: str = "real",
-         note: str = "") -> dict:
+         note: str = "", fork_of: str | None = None) -> dict:
     exclusion = None
     if scope not in ("in", "project"):
         exclusion = scope
@@ -75,6 +96,7 @@ def root(path: str, category: str, scope: str, owner: str | None,
         "priority": priority,
         "kind": kind,                 # real | symlink-target | project-scoped
         "note": note,
+        "fork_of": fork_of,           # declared upstream repo this tree forks (ADR-0016)
     }
 
 
@@ -105,26 +127,30 @@ ROOTS = [
     root("Documents/skills-archive/marketingskills", "upstream_checkout", "in", "coreyhaines31",
          repo="coreyhaines31/marketingskills", git_root="Documents/skills-archive/marketingskills",
          license_="MIT", priority=5, note="coreyhaines31/marketingskills checkout; one local commit ahead of origin"),
-    root("Documents/skills-archive/pstack", "upstream_plugin", "in", "cursor",
+    root("Documents/skills-archive/pstack", "upstream_plugin", "in", "poteto",
          repo="cursor/plugins (pstack)", license_="MIT", priority=5,
-         note="Cursor plugin archive; no .git; manifest author Lauren Tan vs README 'poteto'"),
+         note="pstack plugin archive (no .git); author Lauren Tan ('poteto') in the "
+              "multi-author cursor/plugins distribution monorepo; owner is the author namespace"),
     root(".codex/skills", "agent_tooling", "in", "openai",
          repo="openai/skills", license_="MIT", priority=15,
          note="Codex .system skills installed from openai/skills"),
     root("Work/.agents/skills", "agent_tooling", "in", "work", priority=25,
-         note="Standalone authored engineering tree; no discoverable upstream"),
+         fork_of="mattpocock/skills",
+         note="Declared Fork of mattpocock/skills (ADR-0016); same-name content is a Local Patch"),
     root(".agents/skills", "agent_tooling", "in", "agents", priority=40,
          note="Agent-tooling symlink farm"),
     root("Documents/stillroom-wiki/skills", "content", "in", "stillroom", priority=25,
          note="Hermes configured external_dirs"),
     root("Documents/life-os", "content", "in", "life-os", priority=25,
          note="Life OS vault skill material"),
-    root("honcho", "service_repo", "in", "plastic-labs",
-         repo="plastic-labs/honcho", git_root="honcho", priority=15, note="Honcho service repo skills"),
-    root("services/honcho", "service_repo", "in", "plastic-labs",
-         repo="plastic-labs/honcho", git_root="services/honcho", priority=15, note="Honcho service repo skills"),
-    root("honcho-assessment", "service_repo", "in", "plastic-labs", priority=15,
-         note="Honcho assessment tree"),
+    root("honcho", "service_repo", "excluded: service-repo skills are repo-owned (AGPL-3.0) — ADR-0017",
+         "plastic-labs", repo="plastic-labs/honcho", git_root="honcho", priority=15,
+         note="Honcho service repo skills; excluded from the store"),
+    root("services/honcho", "service_repo", "excluded: service-repo skills are repo-owned (AGPL-3.0) — ADR-0017",
+         "plastic-labs", repo="plastic-labs/honcho", git_root="services/honcho", priority=15,
+         note="Honcho service repo skills; excluded from the store"),
+    root("honcho-assessment", "service_repo", "excluded: service-repo skills are repo-owned (AGPL-3.0) — ADR-0017",
+         "plastic-labs", priority=15, note="Honcho assessment tree; excluded from the store"),
     root("/usr/share/omarchy/default/agents/skills", "os_provided", "in", "omarchy", priority=20),
     root(".claude/skills", "agent_tooling", "in", "claude", priority=35),
     root(".pi/agent/skills", "agent_tooling", "in", "pi", priority=35),
@@ -307,6 +333,14 @@ def main() -> int:
             "references": references(real), "exposures": rec["exposures"],
         })
 
+    # ---- declared-Fork upstream names (ADR-0016) --------------------------
+    repo_root = {r["repo"]: r for r in ROOTS if r["repo"]}
+    fork_upstream_names: dict[str, set[str]] = defaultdict(set)
+    for row in rows:
+        rr = row["root"]
+        if rr and rr.get("repo") in FORK_OWNER:
+            fork_upstream_names[rr["repo"]].add(row["name"])
+
     # ---- group by package hash -> one identity-version per group -----------
     groups: dict[str, list[dict]] = defaultdict(list)
     for row in rows:
@@ -322,11 +356,30 @@ def main() -> int:
         aliases = sorted(n for n in names if n != name)
         r = canonical["root"]
         local_patch = False
+        local_patch_source = None
+        version_status = None
+        prov_repo = r["repo"]
+        prov_commit = r["commit"]
+        prov_origin = r.get("origin_commit")
+        fork_of = r.get("fork_of")
         # marketingskills carries one local commit ahead of origin/main touching
         # skills/prospecting/references/compliance.md (ACMA section).
         if r["repo"] == "coreyhaines31/marketingskills" and any(
                 "prospecting" in p for p in market_local):
             local_patch = "prospecting" in canonical["realpath"]
+        # ADR-0016: a declared Fork's same-name content is a Local Patch of the upstream
+        # identity, never a new pseudo-owner identity.
+        if fork_of and name in fork_upstream_names.get(fork_of, set()):
+            owner = FORK_OWNER[fork_of]
+            local_patch = True
+            local_patch_source = canonical["realpath"]
+            up = repo_root.get(fork_of, {})
+            prov_repo, prov_commit, prov_origin = fork_of, up.get("commit"), up.get("origin_commit")
+        # ADR-0016: a stale profile copy of a shared-shelf skill is an older Version of the
+        # canonical local.* identity, not a distinct identity.
+        elif r["category"] == "hermes_profile" and name in STALE_PROFILE_COPIES:
+            owner = "local"
+            version_status = "superseded-stale-profile-copy"
         exp_map: dict[str, dict] = {}
         for m in members:
             for e in m["exposures"]:
@@ -345,6 +398,21 @@ def main() -> int:
                 "state": u.get("state"), "pinned": u.get("pinned", False),
                 "created_by": u.get("created_by"),
             }
+        provenance = {
+            "repo": prov_repo, "commit": prov_commit, "origin_commit": prov_origin,
+            "pseudo_owner": prov_repo is None,
+        }
+        if local_patch_source:
+            provenance["fork_of"] = fork_of
+            provenance["patch_source"] = local_patch_source
+        # ADR-0017: licence follows the identity, not the editing tree. A Fork patch of an
+        # upstream identity keeps the upstream licence; authored content is proprietary.
+        if owner in AUTHORED_OWNERS and not local_patch_source:
+            license_ = AUTHORED_LICENSE
+        elif prov_repo and prov_repo != r["repo"]:
+            license_ = repo_root.get(prov_repo, {}).get("license") or r["license"]
+        else:
+            license_ = r["license"]
         identities.append({
             "id": f"{owner}.{name}",
             "owner": owner,
@@ -356,12 +424,10 @@ def main() -> int:
             "canonical_source": canonical["realpath"],
             "canonical_kind": "project-scoped" if r["scope"] == "project" else r["kind"],
             "category": r["category"],
-            "provenance": {
-                "repo": r["repo"], "commit": r["commit"], "origin_commit": r.get("origin_commit"),
-                "pseudo_owner": r["repo"] is None,
-            },
+            "provenance": provenance,
             "local_patch": local_patch,
-            "license": r["license"],
+            "version_status": version_status,
+            "license": license_,
             "references": refs,
             "usage": usage_row,
             "divergence_status": None,
@@ -392,7 +458,10 @@ def main() -> int:
     for i in identities:
         by_owner_name[(i["owner"], i["name"])].append(i)
     for (owner, name), items in sorted(by_owner_name.items()):
-        if len(items) > 1:
+        # A declared patch or a superseded copy is a Version of one identity by design,
+        # not an unreconciled divergence (ADR-0016).
+        if len(items) > 1 and not any(
+                i.get("local_patch") or i.get("version_status") for i in items):
             conflicts.append({
                 "kind": "same-identity-divergent-versions",
                 "id": f"{owner}.{name}",
@@ -408,15 +477,18 @@ def main() -> int:
     for i in identities:
         if not i["provenance"]["repo"]:
             for up in upstream_names.get(i["name"], []):
-                resolved = i["owner"] == "hermes_engineer" and i["name"] in RESOLVED_PROFILE_DIVERGENCES
+                # ADR-0016: a profile deviation is profile-scoped, so it is a distinct
+                # identity, never a patch of the shared upstream identity.
+                resolved = i["owner"] == "hermes_engineer"
                 i["divergence_status"] = (
-                    "intentional profile divergence (preserve; divergence-reconciliation)"
+                    "intentional profile deviation; distinct profile-scoped identity (ADR-0016)"
                     if resolved else "unreconciled same-name divergence"
                 )
                 conflicts.append({
                     "kind": "possible-local-patch",
                     "id": i["id"],
                     "requires_decision": not resolved,
+                    "decision": "ADR-0016" if resolved else None,
                     "detail": (f"same name as upstream {up}; could be a patched version of that "
                                f"identity or a distinct identity"),
                     "sources": [i["canonical_source"]],
@@ -424,10 +496,11 @@ def main() -> int:
     # explicit, non-mechanical conflicts
     conflicts.append({
         "kind": "owner-attribution",
-        "id": "cursor.*",
-        "requires_decision": True,
+        "id": "poteto.*",
+        "requires_decision": False,
+        "decision": "#28: owner is the author namespace `poteto` (Lauren Tan), not the hosting repo `cursor`",
         "detail": ("pstack has no .git; its manifest names Lauren Tan while the README names "
-                   "'poteto'. Proposed owner 'cursor' (repo path) is provisional"),
+                   "'poteto'; `cursor/plugins` is a multi-author distribution monorepo"),
         "sources": [str(HOME / "Documents/skills-archive/pstack")],
     })
     dangling = sorted({d for i in identities for d in i["dangling_references"]})
@@ -442,10 +515,12 @@ def main() -> int:
     conflicts.append({
         "kind": "scope-question",
         "id": "service-repo skills (plastic-labs/honcho)",
-        "requires_decision": True,
-        "detail": ("8 honcho service-repo skills are authored but not obviously consumed by an "
-                   "agent skill loader; confirm they belong in the store scope (ADR-0008)"),
-        "sources": sorted(i["canonical_source"] for i in identities if i["owner"] == "plastic-labs"),
+        "requires_decision": False,
+        "decision": "ADR-0017: excluded as service-repo-owned (AGPL-3.0); stays repo-owned",
+        "detail": ("honcho's internal skills are consumed only by agents working in the honcho "
+                   "checkouts and the repository is AGPL-3.0; no Hermes profile consumes them"),
+        "sources": [str(HOME / "honcho"), str(HOME / "services/honcho"),
+                    str(HOME / "honcho-assessment")],
     })
     # same name, different content, both in Hermes roots: shelf (pseudo-owner local) vs a profile
     local_names = {i["name"] for i in identities if i["owner"] == "local"}
@@ -454,10 +529,11 @@ def main() -> int:
             conflicts.append({
                 "kind": "hermes-shelf-vs-profile-divergence",
                 "id": i["name"],
-                "requires_decision": True,
+                "requires_decision": False,
+                "decision": "ADR-0016: distinct profile-scoped identity (shared shelf remains canonical)",
                 "detail": (f"agent-authored shelf identity local.{i['name']} and profile identity "
-                           f"{i['id']} both exist with different content; decide which is canonical "
-                           f"or whether the profile copy is a patched version"),
+                           f"{i['id']} both exist with different content; the profile copy is a "
+                           f"deliberately-maintained, profile-scoped identity"),
                 "sources": [i["canonical_source"]],
             })
 
@@ -506,6 +582,20 @@ def main() -> int:
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "generated_by": "scripts/skill_audit.py",
         "scope": scope_report,
+        "policy": {
+            "recorded_in": ["ADR-0016", "ADR-0017"],
+            "decided_by": "Resolve the Stage 1 audit's identity and admission conflicts (#28)",
+            "owner_overrides": {"cursor": "poteto"},
+            "forks": {"Work/.agents/skills": "mattpocock/skills"},
+            "excluded_scope": ["service_repo (plastic-labs/honcho, AGPL-3.0)"],
+            "profile_divergences_distinct": sorted(PROFILE_DIVERGENCES_DISTINCT),
+            "stale_profile_copies_collapsed": sorted(STALE_PROFILE_COPIES),
+            "licence_convention": {
+                "authored": AUTHORED_LICENSE,
+                "vendored": "upstream SPDX id + verbatim notice",
+                "unresolved": ["agents", "omarchy"],
+            },
+        },
         "counts": {
             "distinct_realpaths": len(rows),
             "identity_versions": len(identities),
@@ -530,6 +620,8 @@ def main() -> int:
 
     digest = {
         "counts": index["counts"],
+        "distinct_identities": index["counts"]["distinct_identities"],
+        "identity_versions": index["counts"]["identity_versions"],
         "classification_counts": index["classification_counts"],
         "conflicts": len(conflicts),
         "conflict_kinds": sorted({c["kind"] for c in conflicts}),
