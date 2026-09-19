@@ -1,0 +1,32 @@
+{
+  "comment": "THROWAWAY prototype (wayfinder #7). Authored per-consumer exposure policy. The store is the hub; each consumer's farm is a spoke. Not production.",
+  "store": "store/objects",
+  "catalog": "store/catalog.json",
+  "farms_root": "farms",
+  "consumers": {
+    "codex": {
+      "exposures": {
+        "pdf": "codex.pdf",
+        "skill-creator": "codex.skill-creator",
+        "tdd": "work.tdd"
+      }
+    },
+    "hermes": {
+      "exposures": {
+        "pdf": "hermes.pdf"
+      }
+    },
+    "bb": {
+      "exposures": {
+        "skill-creator": "bb.skill-creator",
+        "tdd": "archive.tdd"
+      }
+    },
+    "pi": {
+      "exposures": {
+        "pdf": "manor-ai.pdf",
+        "tdd": "pstack.tdd"
+      }
+    }
+  }
+}
