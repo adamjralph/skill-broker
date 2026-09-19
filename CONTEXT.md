@@ -171,6 +171,11 @@ A typed semantic result expressing relevance and confidence over a candidate set
 grants nothing.
 _Avoid_: decision, score, approval
 
+**No-Skill Outcome**:
+The explicit Judgment that no authorised Candidate warrants intervention for a request. A
+valid, recorded outcome, not a failure.
+_Avoid_: no-match, miss, empty result
+
 **Grant**:
 The deterministic authorisation of one Resolved Skill Version for delivery to one agent
 turn. The only step that carries authority.
