@@ -164,6 +164,11 @@ The bounded collection of granted Resolved Skill Versions and their granted depe
 supplied for one request.
 _Avoid_: bundle, payload, context blob
 
+**Pack Delivery**:
+Whether a Skill Pack's content is supplied within the Intervention itself or by reference to
+a location holding it in full. Independent of which Skills the Pack contains.
+_Avoid_: truncation, spill
+
 **Intervention**:
 The act of supplying a validated Skill Pack before the main agent begins work on the
 request.
