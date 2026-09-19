@@ -104,15 +104,24 @@ def main() -> int:
                 )
             print(f"  {name}: {len(by_sha)} distinct content(s) across {distinct_consumers} consumers")
 
-    # Alias: one content, many ids -> one object.
-    print("\n=== aliases ===")
-    by_sha: dict[str, list[str]] = {}
-    for skill_id, entry in catalog.items():
-        by_sha.setdefault(entry["package_sha"], []).append(skill_id)
-    for sha, ids in sorted(by_sha.items()):
-        if len(ids) > 1:
-            checker.check(True, f"alias: {', '.join(sorted(ids))} share one object ({sha[:12]})")
-            print(f"  {sha[:12]}: {', '.join(sorted(ids))}")
+    # Alias: one identity, many exposure names -> one object. Identical content
+    # is one identity, so no two ids may share a package hash.
+    print("\n=== aliases (one identity, many names) ===")
+    shas = [entry["package_sha"] for entry in catalog.values()]
+    checker.check(len(shas) == len(set(shas)), "no two ids share content (identical content is one identity)")
+    names_by_id: dict[str, set[str]] = {}
+    targets_by_id: dict[str, set[str]] = {}
+    for consumer, spec in manifest["consumers"].items():
+        for name, skill_id in spec["exposures"].items():
+            names_by_id.setdefault(skill_id, set()).add(name)
+            if name in resolved.get(consumer, {}):
+                targets_by_id.setdefault(skill_id, set()).add(resolved[consumer][name])
+    for skill_id, names in sorted(names_by_id.items()):
+        targets = targets_by_id.get(skill_id, set())
+        checker.check(len(targets) == 1, f"{skill_id}: every exposure name resolves to one object")
+        if len(names) > 1:
+            checker.check(True, f"alias: {skill_id} exposed as {', '.join(sorted(names))}")
+            print(f"  {skill_id}: names {', '.join(sorted(names))}")
 
     print()
     return checker.report()

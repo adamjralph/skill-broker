@@ -4,10 +4,12 @@
 Creates a small content-addressed store of synthetic skill packages shaped like
 the real same-name divergences audited in `docs/research/`:
 
-* ``pdf``           — 3 distinct contents (real: codex-plugins / hermes / manor-ai)
-* ``skill-creator`` — 2 distinct contents (real: codex / bb)
-* ``tdd``           — 2 distinct contents plus one alias
-                      (real: pstack / Work-vs-archive, with Work and archive identical)
+* ``pdf``           — 2 distinct contents (real: openai codex-plugins / Hermes)
+* ``skill-creator`` — 2 distinct contents (real: openai / bb)
+* ``tdd``           — 2 distinct contents (real: mattpocock / cursor pstack)
+
+**manor-ai is deliberately absent**: project-scoped trees are excluded from the
+store (ADR-0008) and must stay excluded.
 
 The bodies are synthetic on purpose — the prototype proves the *mechanism*, and
 this avoids vendoring third-party skill content. The real audited hashes are
@@ -35,16 +37,14 @@ STORE = HERE / "store"
 OBJECTS = STORE / "objects"
 
 # id -> (frontmatter name, {relative path: text})
+# Namespaces are owner/provenance (see #9), not the consuming tool.
 VARIANTS = {
-    "codex.pdf": ("pdf", {"SKILL.md": "---\nname: pdf\ndescription: codex plugin pdf\n---\n\nCODEX PDF VARIANT\nHandle PDFs with the codex plugin runtime toolchain.\n"}),
-    "hermes.pdf": ("pdf", {"SKILL.md": "---\nname: pdf\ndescription: hermes productivity pdf\n---\n\nHERMES PDF VARIANT\nHandle PDFs with the Hermes productivity helpers.\n"}),
-    "manor-ai.pdf": ("pdf", {"SKILL.md": "---\nname: pdf\ndescription: manor-ai project pdf\n---\n\nMANOR-AI PDF VARIANT\nProject-local PDF handling.\n", "scripts/extract.py": "print('manor-ai extract')\n"}),
-    "codex.skill-creator": ("skill-creator", {"SKILL.md": "---\nname: skill-creator\ndescription: codex skill creator\n---\n\nCODEX SKILL-CREATOR\nAuthor skills for the codex harness.\n"}),
+    "openai.pdf": ("pdf", {"SKILL.md": "---\nname: pdf\ndescription: openai plugin pdf\n---\n\nOPENAI PDF VARIANT\nHandle PDFs with the codex plugin runtime toolchain.\n"}),
+    "nousresearch.pdf": ("pdf", {"SKILL.md": "---\nname: pdf\ndescription: hermes productivity pdf\n---\n\nNOUS RESEARCH PDF VARIANT\nHandle PDFs with the Hermes productivity helpers.\n"}),
+    "openai.skill-creator": ("skill-creator", {"SKILL.md": "---\nname: skill-creator\ndescription: openai skill creator\n---\n\nOPENAI SKILL-CREATOR\nAuthor skills for the codex harness.\n"}),
     "bb.skill-creator": ("skill-creator", {"SKILL.md": "---\nname: skill-creator\ndescription: bb skill creator\n---\n\nBB SKILL-CREATOR\nAuthor skills for the BB harness.\n"}),
-    "work.tdd": ("tdd", {"SKILL.md": "---\nname: tdd\ndescription: tdd\n---\n\nWORK TDD\nTest-driven development, engineering-work copy.\n"}),
-    # Byte-identical to work.tdd: the alias case (one object, two ids).
-    "archive.tdd": ("tdd", {"SKILL.md": "---\nname: tdd\ndescription: tdd\n---\n\nWORK TDD\nTest-driven development, engineering-work copy.\n"}),
-    "pstack.tdd": ("tdd", {"SKILL.md": "---\nname: tdd\ndescription: tdd\n---\n\nPSTACK TDD\nTest-driven development, pstack archive copy.\n"}),
+    "mattpocock.tdd": ("tdd", {"SKILL.md": "---\nname: tdd\ndescription: tdd\n---\n\nMATTPOCOCK TDD\nTest-driven development, engineering-skills copy.\n"}),
+    "cursor.tdd": ("tdd", {"SKILL.md": "---\nname: tdd\ndescription: tdd\n---\n\nCURSOR PSTACK TDD\nTest-driven development, pstack archive copy.\n"}),
 }
 
 
@@ -80,16 +80,18 @@ def main() -> int:
             "skill_md_sha": md_sha,
         }
 
-    # Alias check: archive.tdd must share work.tdd's object.
-    assert catalog["work.tdd"]["package_sha"] == catalog["archive.tdd"]["package_sha"], "alias fixture drifted"
+    # No two ids may share a package hash: identical content is one identity.
+    shas = [c["package_sha"] for c in catalog.values()]
+    assert len(shas) == len(set(shas)), "two ids share content; aliases must be names, not ids"
 
     (STORE / "catalog.json").write_text(json.dumps({"skills": catalog}, indent=2) + "\n")
 
-    distinct_pdf = {catalog[i]["package_sha"] for i in ("codex.pdf", "hermes.pdf", "manor-ai.pdf")}
-    distinct_tdd = {catalog[i]["package_sha"] for i in ("work.tdd", "pstack.tdd")}
-    print(f"store: {OBJECTS} ({len({c['package_sha'] for c in catalog.values()})} objects, {len(catalog)} ids)")
-    print(f"pdf variants: {len(distinct_pdf)} distinct objects")
-    print(f"tdd variants: {len(distinct_tdd)} distinct objects; work.tdd == archive.tdd (alias)")
+    distinct_pdf = {catalog[i]["package_sha"] for i in ("openai.pdf", "nousresearch.pdf")}
+    distinct_sc = {catalog[i]["package_sha"] for i in ("openai.skill-creator", "bb.skill-creator")}
+    distinct_tdd = {catalog[i]["package_sha"] for i in ("mattpocock.tdd", "cursor.tdd")}
+    print(f"store: {OBJECTS} ({len(set(shas))} objects, {len(catalog)} ids)")
+    print(f"pdf variants: {len(distinct_pdf)}; skill-creator: {len(distinct_sc)}; tdd: {len(distinct_tdd)} distinct objects")
+    print("note: manor-ai excluded (project-scoped, ADR-0008)")
     return 0
 
 
