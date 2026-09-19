@@ -97,6 +97,17 @@ The generated, committed inventory of the Skill Store: one row per Skill identit
 its Version, Provenance, aliases, and dependencies. The committed form of the Catalog.
 _Avoid_: catalog file, index file
 
+**Cutover**:
+The repointing of one Consumer's skill resolution from its existing exposures to its
+generated Exposure Farm. Performed one Consumer at a time, behind a verification gate, and
+reversible.
+_Avoid_: switch, flip, replacement
+
+**Retirement**:
+The removal of a superseded path after every Consumer resolves through the Skill Store.
+Requires explicit approval; the only irreversible migration act.
+_Avoid_: deletion, cleanup, prune
+
 ### Exposure and policy
 
 **Consumer**:
