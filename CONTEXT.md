@@ -92,12 +92,32 @@ A named group of Skills in the Skill Store that a Profile Policy can allow or de
 unit.
 _Avoid_: pack, bundle, folder
 
+**Store Manifest**:
+The generated, committed inventory of the Skill Store: one row per Skill identity carrying
+its Version, Provenance, aliases, and dependencies. The committed form of the Catalog.
+_Avoid_: catalog file, index file
+
 ### Exposure and policy
 
+**Consumer**:
+An environment that resolves Skills for itself: a Hermes profile or another agent's skill
+root. Each Consumer has its own Exposure Farm.
+_Avoid_: client, application
+
 **Exposure**:
-A path by which a Skill is reachable by a profile. One Skill may have many Exposures and one
+A path by which a Skill is reachable by a Consumer. One Skill may have many Exposures and one
 Canonical Source.
 _Avoid_: copy, instance, location
+
+**Exposure Farm**:
+The generated set of symlinks that gives one Consumer its Exposures, linking Exposure names
+to the Skill Store's canonical directories. The Skill Store is never a Consumer path.
+_Avoid_: symlink farm, mirror, spoke
+
+**Exposure Manifest**:
+The record of which Exposure names one Consumer resolves to which IDs. Authored for
+non-Hermes Consumers; derived from the Profile Policy for Hermes profiles.
+_Avoid_: farm manifest, mapping file
 
 **Profile Policy**:
 The deterministic declaration of what one profile may receive: its Foundation Set,
