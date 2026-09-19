@@ -1,0 +1,7 @@
+name: skill-broker-prototype
+version: 0.0.1
+description: "[PROTOTYPE — throwaway] Proves a cache-safe Skill Broker intervention seam over Hermes pre_llm_call"
+kind: standalone
+provides_hooks:
+  - pre_llm_call
+  - pre_api_request
