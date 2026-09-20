@@ -8,6 +8,7 @@ persists. They carry hashes and identifiers, never request text and never Skill 
 from __future__ import annotations
 
 import hashlib
+from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import Enum
 
@@ -50,6 +51,11 @@ class ResolvedSkillVersion:
     def to_record(self) -> dict:
         return {"id": self.id, "name": self.name, "version": self.version}
 
+    @classmethod
+    def from_record(cls, record: Mapping) -> "ResolvedSkillVersion":
+        return cls(id=str(record["id"]), name=str(record["name"]),
+                   version=str(record["version"]))
+
 
 @dataclass(frozen=True)
 class Candidate:
@@ -63,6 +69,11 @@ class Candidate:
 
     def to_record(self) -> dict:
         return {"id": self.id, "name": self.name, "score": self.score, "exact": self.exact}
+
+    @classmethod
+    def from_record(cls, record: Mapping) -> "Candidate":
+        return cls(id=str(record["id"]), name=str(record["name"]),
+                   score=float(record.get("score", 0.0)), exact=bool(record.get("exact", False)))
 
 
 @dataclass(frozen=True)
@@ -87,6 +98,16 @@ class Judgment:
             "candidates": list(self.candidates),
             "no_skill": self.no_skill,
         }
+
+    @classmethod
+    def from_record(cls, record: Mapping) -> "Judgment":
+        return cls(
+            primary=record.get("primary"),
+            confidence=float(record.get("confidence", 0.0)),
+            distribution={str(key): float(value)
+                          for key, value in (record.get("distribution") or {}).items()},
+            candidates=tuple(str(candidate) for candidate in record.get("candidates", ())),
+        )
 
 
 @dataclass(frozen=True)
@@ -160,6 +181,45 @@ class RouteDecision:
             "pack_sha256": self.pack_sha256,
             "budget": self.budget,
         }
+
+    @classmethod
+    def from_record(cls, record: Mapping) -> "RouteDecision":
+        """Rebuild a Decision from its recorded form, so a log line can be re-checked (B12).
+
+        Only the routing identity, the closure, the Candidate set, the Judgment and the Grants
+        are reconstructed: the request text was never recorded (ADR-0015), so the record carries
+        its hash and length instead.
+        """
+        request = record.get("request") or {}
+        delivery = record.get("delivery")
+        judgment = record.get("judgment")
+        return cls(
+            profile=str(record.get("profile", "")),
+            session_id=record.get("session_id"),
+            outcome=TurnOutcome(str(record.get("outcome", TurnOutcome.NO_SKILL.value))),
+            reasons=tuple(str(reason) for reason in record.get("reasons", ())),
+            request_sha256=str(request.get("sha256", "")),
+            request_chars=int(request.get("chars", 0)),
+            task_id=record.get("task_id"),
+            turn_id=record.get("turn_id"),
+            delivery_path=record.get("delivery_path"),
+            authorised_closure=tuple(
+                ResolvedSkillVersion.from_record(entry)
+                for entry in record.get("authorised_closure", ())),
+            candidate_limit=record.get("candidate_limit"),
+            candidates=tuple(Candidate.from_record(candidate)
+                             for candidate in record.get("candidates", ())),
+            judgment=Judgment.from_record(judgment) if judgment else None,
+            judgment_source=record.get("judgment_source"),
+            judgment_latency_ms=record.get("judgment_latency_ms"),
+            judgment_usage=record.get("judgment_usage"),
+            grants=tuple(ResolvedSkillVersion.from_record(entry)
+                         for entry in record.get("grants", ())),
+            delivery=PackDelivery(str(delivery)) if delivery else None,
+            pack_chars=record.get("pack_chars"),
+            pack_sha256=record.get("pack_sha256"),
+            budget=record.get("budget"),
+        )
 
 
 @dataclass(frozen=True)

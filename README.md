@@ -30,8 +30,10 @@ duplicate suppression, the live Jev Judgment Source with its recorded/No-Skill f
 Hermes Adapter at the cache-safe seam in Shadow Mode, the machine-local Replay Corpus with
 Reviewed Cases and SHA-bound Recordings, the offline routing evaluation with its pre-registered
 Soft Thresholds, and the injection gate: the data-independent Hard Gates checked on every turn,
-fail-closed with a recorded Incident, and the per-batch injection switch. Injection stays off by
-default. Stage 6's Shadow Report and batch review is next.
+fail-closed with a recorded Incident, and the per-batch injection switch. The Shadow Report and
+its batch review assemble recorded Route Decisions and observed skill use into the reviewed
+artifact whose review is the only thing that enables a batch. Injection stays off by default.
+The remaining gate is #53's Brokered-withholding decision before the bounded pilot (#57).
 
 Canonical documents:
 

@@ -203,6 +203,19 @@ class Incident:
         )
 
 
+def closure_failure_kind(reasons: Sequence[str]) -> str | None:
+    """Classify closure-failure reasons as a missing/denied Dependency or a cycle (B7).
+
+    One home for the reason vocabulary both the gate and the offline evaluation read, so a
+    reason reworded in one place cannot silently stop matching in another.
+    """
+    if any("dependency cycle" in reason for reason in reasons):
+        return "cycle"
+    if any(marker in reason for reason in reasons for marker in _CLOSURE_MARKERS):
+        return "dependency"
+    return None
+
+
 def check_hard_gates(decision: RouteDecision,
                      *, foundation_ids: Sequence[str] = ()) -> tuple[str, ...]:
     """The Hard Gates breached by one Route Decision, in canonical order (AC1).
@@ -232,7 +245,6 @@ def check_hard_gates(decision: RouteDecision,
            ) or any(marker in reason for reason in decision.reasons
                     for marker in _CLOSURE_MARKERS):
         breaches.append(HardGate.INCOMPLETE_CLOSURE.value)
-
     return tuple(gate for gate in HARD_GATES if gate in breaches)
 
 
@@ -350,6 +362,18 @@ class InjectionGate:
         record["disabled_reason"] = reason
         self._write(state)
         return self.status(profile)
+
+    def record_review(self, review: GateReview) -> dict:
+        """Record a review outcome without enabling anything (a rejection, AC5).
+
+        The review is durable evidence even when it approves nothing, so a rejected Shadow
+        Report leaves a trace and Shadow Mode keeps running.
+        """
+        state = self._read()
+        record = self._profile_record(state, review.profile)
+        record["last_review"] = review.to_record()
+        self._write(state)
+        return self.status(review.profile)
 
     def fail_closed(self, profile: str, gates: Sequence[str], *, reasons: Sequence[str] = (),
                     turn_id: str | None = None, session_id: str | None = None,
@@ -510,5 +534,6 @@ __all__ = [
     "REVIEW_OUTCOMES",
     "STATE_VERSION",
     "check_hard_gates",
+    "closure_failure_kind",
     "soft_threshold_regression",
 ]

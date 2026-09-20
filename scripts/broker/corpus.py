@@ -21,7 +21,7 @@ import hashlib
 import json
 import re
 import sqlite3
-from collections.abc import Collection, Iterable, Mapping
+from collections.abc import Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
@@ -89,6 +89,20 @@ class Turn:
     content: str
     timestamp: float
     display_kind: str | None
+
+
+@dataclass(frozen=True)
+class SkillUse:
+    """One observed ``skill_view`` call, attributed to the user turn that preceded it.
+
+    This is what the agent *actually used* in a conversation, the signal the Shadow Report
+    compares a would-have-selected Route Decision against (spec B13, ticket #56).
+    """
+
+    session_id: str
+    turn_id: str
+    skill: str
+    timestamp: float
 
 
 @dataclass(frozen=True)
@@ -360,6 +374,20 @@ WHERE m.role = 'user' AND m.active = 1 AND m._compressed_summary = 0
 ORDER BY s.started_at, m.timestamp, m.id
 """
 
+_USER_TURN_IDS_QUERY = """
+SELECT m.id, m.session_id, m.timestamp
+FROM messages m
+WHERE m.role = 'user' AND m.active = 1 AND m._compressed_summary = 0
+ORDER BY m.session_id, m.timestamp, m.id
+"""
+
+_SKILL_CALL_QUERY = """
+SELECT session_id, timestamp, tool_calls
+FROM messages
+WHERE tool_calls IS NOT NULL AND tool_calls != '' AND active = 1
+ORDER BY session_id, timestamp, id
+"""
+
 
 def sessions_db(profile: str, hermes_home: Path | str = Path("~/.hermes")) -> Path:
     """Where a profile's Hermes sessions live: its own ``state.db``, or the root for default."""
@@ -406,6 +434,84 @@ def read_turns(db: Path | str) -> list[Turn]:
             display_kind=row["display_kind"],
         ))
     return turns
+
+
+def read_skill_use(db: Path | str) -> list[SkillUse]:
+    """Every ``skill_view`` call in a Hermes ``state.db``, attributed to its user turn.
+
+    A call belongs to the most recent user turn in its session at or before the call's time, so
+    a Route Decision keyed by ``session_id``/``turn_id`` can be compared with what the agent
+    actually loaded. The skill is the Name the call passed, deduplicated per turn.
+    """
+    path = Path(db)
+    if not path.exists():
+        raise CorpusError(f"sessions database not found: {path}")
+    try:
+        connection = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+    except sqlite3.Error as exc:
+        raise CorpusError(f"cannot open sessions database {path}: {exc}") from exc
+    try:
+        connection.row_factory = sqlite3.Row
+        turns = connection.execute(_USER_TURN_IDS_QUERY).fetchall()
+        calls = connection.execute(_SKILL_CALL_QUERY).fetchall()
+    except sqlite3.Error as exc:
+        raise CorpusError(f"cannot read sessions database {path}: {exc}") from exc
+    finally:
+        connection.close()
+
+    by_session: dict[str, list[tuple[float, str]]] = {}
+    for row in turns:
+        by_session.setdefault(str(row["session_id"]), []).append(
+            (float(row["timestamp"]), str(row["id"])))
+    for session_turns in by_session.values():
+        session_turns.sort()
+
+    uses: list[SkillUse] = []
+    seen: set[tuple[str, str, str]] = set()
+    for row in calls:
+        session_id = str(row["session_id"])
+        timestamp = float(row["timestamp"])
+        for skill in _skill_names(row["tool_calls"]):
+            turn_id = _turn_at_or_before(by_session.get(session_id, ()), timestamp)
+            if turn_id is None or (session_id, turn_id, skill) in seen:
+                continue
+            seen.add((session_id, turn_id, skill))
+            uses.append(SkillUse(session_id=session_id, turn_id=turn_id, skill=skill,
+                                 timestamp=timestamp))
+    return uses
+
+
+def _skill_names(blob: object) -> list[str]:
+    """The Skill Names one assistant message's ``tool_calls`` JSON loaded through ``skill_view``."""
+    try:
+        calls = json.loads(blob) if isinstance(blob, str) else blob
+    except ValueError:
+        return []
+    if not isinstance(calls, list):
+        return []
+    names: list[str] = []
+    for call in calls:
+        function = call.get("function") if isinstance(call, Mapping) else None
+        if not isinstance(function, Mapping) or function.get("name") != "skill_view":
+            continue
+        try:
+            arguments = json.loads(function.get("arguments") or "{}")
+        except ValueError:
+            continue
+        name = arguments.get("name") if isinstance(arguments, Mapping) else None
+        if isinstance(name, str) and name:
+            names.append(name)
+    return names
+
+
+def _turn_at_or_before(turns: Sequence[tuple[float, str]], timestamp: float) -> str | None:
+    """The id of the latest turn at or before ``timestamp``, or ``None`` when there is none."""
+    found: str | None = None
+    for turn_timestamp, turn_id in turns:
+        if turn_timestamp > timestamp:
+            break
+        found = turn_id
+    return found
 
 
 def _belongs_to(turn: Turn, profile: str) -> bool:

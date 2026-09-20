@@ -8,6 +8,7 @@ recording roots are temporary directories, so no test writes into the repo's com
 
 from __future__ import annotations
 
+import json
 import sqlite3
 import sys
 import tempfile
@@ -37,6 +38,8 @@ CREATE TABLE messages (
     timestamp REAL NOT NULL,
     active INTEGER NOT NULL DEFAULT 1,
     display_kind TEXT,
+    tool_calls TEXT,
+    tool_name TEXT,
     _compressed_summary INTEGER NOT NULL DEFAULT 0
 );
 """
@@ -95,6 +98,29 @@ def add_turn(
             "(session_id, role, content, timestamp, active, display_kind, _compressed_summary) "
             "VALUES (?, ?, ?, ?, ?, ?, ?)",
             (session_id, role, content, timestamp, active, display_kind, compressed),
+        )
+        connection.commit()
+        return int(cursor.lastrowid)
+    finally:
+        connection.close()
+
+
+def add_skill_call(db: Path, session_id: str, skill: str, *, timestamp: float = 0.0,
+                   name: str = "skill_view", file_path: str | None = None) -> int:
+    """Insert an assistant message whose ``skill_view`` call loads ``skill``; returns its id."""
+    arguments: dict[str, str] = {"name": skill}
+    if file_path:
+        arguments["file_path"] = file_path
+    tool_calls = json.dumps([{
+        "id": f"call_{skill}", "type": "function",
+        "function": {"name": name, "arguments": json.dumps(arguments)},
+    }])
+    connection = sqlite3.connect(db)
+    try:
+        cursor = connection.execute(
+            "INSERT INTO messages (session_id, role, content, timestamp, active, tool_calls) "
+            "VALUES (?, 'assistant', '', ?, 1, ?)",
+            (session_id, timestamp, tool_calls),
         )
         connection.commit()
         return int(cursor.lastrowid)

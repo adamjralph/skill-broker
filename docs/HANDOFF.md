@@ -1,7 +1,7 @@
 # Skill Broker handoff
 
 Updated: 2026-09-21 07:28 AEST (verified against the working tree, Git, GitHub, and the store)
-Next objective: build **[#56 — The Shadow Report and batch review](https://github.com/adamjralph/skill-broker/issues/56)** (Stage 6) on top of #55, with the pilot-gating ticket [#53](https://github.com/adamjralph/skill-broker/issues/53). **[#52](https://github.com/adamjralph/skill-broker/issues/52)** — the Hard Gates, fail-closed and the per-batch injection switch — is built.
+Next objective: resolve **[#53 — Decide where Brokered withholding is enforced](https://github.com/adamjralph/skill-broker/issues/53)** (spec B16) before the bounded pilot [#57](https://github.com/adamjralph/skill-broker/issues/57). **[#52](https://github.com/adamjralph/skill-broker/issues/52)** (Hard Gates, fail-closed, the per-batch switch) and **[#56](https://github.com/adamjralph/skill-broker/issues/56)** (the Shadow Report and batch review) are built.
 
 ## Start here
 
@@ -24,11 +24,11 @@ Authoritative spec and decisions:
 **Git.** Branch `main`, HEAD is the #54 Replay Corpus commit on top of `b3b2ab9` (the #51 Adapter). Recent broker commits:
 `47e6e00` #48 Judgment/Grant, `e19deea` #49 Pack, `46c436c` #50 live Jev, `b3b2ab9` #51 Adapter, `21e3638` #54 Replay Corpus, then #55 Offline evaluation.
 
-**Tests.** `python3 -m unittest discover -s tests` from the repo root → **336 tests, all passing**. No packaging, no third-party deps beyond PyYAML for the store tooling. The Adapter's Hermes-seam proof is separate (it needs the Hermes venv): `~/.hermes/hermes-agent/.venv/bin/python tests/hermes_adapter/run_shadow_proof.py` → `VERDICT: PASS`.
+**Tests.** `python3 -m unittest discover -s tests` from the repo root → **363 tests, all passing**. No packaging, no third-party deps beyond PyYAML for the store tooling. The Adapter's Hermes-seam proof is separate (it needs the Hermes venv): `~/.hermes/hermes-agent/.venv/bin/python tests/hermes_adapter/run_shadow_proof.py` → `VERDICT: PASS`.
 
-**Broker modules** (`scripts/broker/`): `broker.py` (`Broker.prepare_turn`, the only external seam), `closure.py` (`authorised_closure`, `dependency_closure`), `retrieval.py` (BM25 candidate ranking), `metadata.py` (frontmatter retrieval metadata), `judgment.py` (`JudgmentCall`, sources, `validate`, `grant`, `FallbackJudgmentSource`, `FirstCandidateJudgmentSource`, SHA-bound `Recording`), `jev.py` (`JevJudgmentSource`, `live_judgment_source`), `pack.py` (`HookConfig`, `Budget`, `build_pack`, Pack Delivery), `evidence.py` (`EvidenceLog`, `JsonlEvidenceLog`, `SessionLedger`, `append_jsonl`), `types.py` (`RouteDecision`, `InterventionResult`, `PackDelivery`, …), `adapter.py` (the Hermes Adapter and its API-request evidence handle), `corpus.py` (Replay Corpus extraction, the machine-local Case store, the committed reviewed-label and Recording stores), `evaluation.py` (offline replay over Reviewed Cases and Recordings, per-split metrics, retrieval/Judgment/Grant attribution, the committed pre-registration of Soft Thresholds, and `soft_threshold_regression`), `gate.py` (the Hard Gates, fail-closed Incidents, the per-batch switch, and the prompt/tool-schema baseline), `hermes_plugin/` (the loadable `skill-broker` plugin). The CLIs are `scripts/corpus.py`, `scripts/evaluate.py` and `scripts/gate.py`.
+**Broker modules** (`scripts/broker/`): `broker.py` (`Broker.prepare_turn`, the only external seam), `closure.py` (`authorised_closure`, `dependency_closure`), `retrieval.py` (BM25 candidate ranking), `metadata.py` (frontmatter retrieval metadata), `judgment.py` (`JudgmentCall`, sources, `validate`, `grant`, `FallbackJudgmentSource`, `FirstCandidateJudgmentSource`, SHA-bound `Recording`), `jev.py` (`JevJudgmentSource`, `live_judgment_source`), `pack.py` (`HookConfig`, `Budget`, `build_pack`, Pack Delivery), `evidence.py` (`EvidenceLog`, `JsonlEvidenceLog`, `SessionLedger`, `append_jsonl`), `types.py` (`RouteDecision`, `InterventionResult`, `PackDelivery`, …), `adapter.py` (the Hermes Adapter and its API-request evidence handle), `corpus.py` (Replay Corpus extraction, the machine-local Case store, the committed reviewed-label and Recording stores), `evaluation.py` (offline replay over Reviewed Cases and Recordings, per-split metrics, retrieval/Judgment/Grant attribution, the committed pre-registration of Soft Thresholds, and `soft_threshold_regression`), `gate.py` (the Hard Gates, fail-closed Incidents, the per-batch switch, and the prompt/tool-schema baseline), `report.py` (the Shadow Report and its batch review), `hermes_plugin/` (the loadable `skill-broker` plugin). The CLIs are `scripts/corpus.py`, `scripts/evaluate.py`, `scripts/gate.py` and `scripts/shadow_report.py`.
 
-**Closed tickets.** #45–#55 (module home, seam, retrieval, Judgment/Grant, Pack, live Jev, Hermes Adapter in Shadow Mode, Replay Corpus and Reviewed Cases, offline routing evaluation and pre-registered Soft Thresholds) and #52 (Hard Gates, fail-closed, the per-batch injection switch).
+**Closed tickets.** #45–#55 (module home, seam, retrieval, Judgment/Grant, Pack, live Jev, Hermes Adapter in Shadow Mode, Replay Corpus and Reviewed Cases, offline routing evaluation and pre-registered Soft Thresholds) #52 (Hard Gates, fail-closed, the per-batch injection switch) and #56 (the Shadow Report and batch review).
 
 **Skill Store.** `~/skill-store` (repo `adamjralph/skill-store`): **415 identities**, manifest verifies clean; two policies `life-agent.json` and `stillroom-signal-generator.json`. Verified this session:
 
@@ -39,7 +39,7 @@ python3 scripts/profile_policy.py validate --store ~/skill-store    # 2 policies
 
 **Cutover.** `life-agent` is live, zero-delta, rollback rehearsed; farm at `~/.local/share/skill-broker/farms/life-agent`.
 
-**Open frontier** (open, no open blocker, unassigned): #53, #56, #59. Gated: #57←#52+#53+#56, #58←#57. Spec order favours #56 next (#55, its Stage 5 blocker, just landed).
+**Open frontier** (open, no open blocker, unassigned): #53, #59. Gated: #57←#52+#53+#56 (only #53 remains), #58←#57. Spec order favours #53 next, the B16 decision the pilot needs.
 
 **Evidence from #51.** The Adapter is built (`scripts/broker/adapter.py`) and loadable as the `skill-broker` Hermes plugin (`scripts/broker/hermes_plugin/`). The executed Hermes-seam proof runs five modes against a mock provider under one isolated `HERMES_HOME` and passes: byte-identical system prompt and tool schema control-vs-treatment and across turns, no Pack on the wire in Shadow Mode while a Pack is built, one evidence record per provider request locating its Route Decision, multimodal and `codex_app_server` refused with the reason recorded, an Adapter failure swallowed, and the effective hook cap read from config (which is unchanged). Injection remains **off** by default.
 
@@ -47,14 +47,15 @@ python3 scripts/profile_policy.py validate --store ~/skill-store    # 2 policies
 
 **Evidence from #52.** `scripts/broker/gate.py` implements the injection gate. `check_hard_gates` is the data-independent check over a Route Decision — an unauthorised Grant, a foundation-resolution regression, broker/native hash disagreement, a Judgment validation failure and an incomplete Dependency Closure — and `InjectionGate` is the durable per-batch switch: `enable(batch, review)` refuses a review that does not name the batch or does not post-date a breach, `fail_closed` records an append-only Incident, turns injection off and marks the profile review-required, and `check_soft_thresholds`/`note_expansion_regression` block expansion while leaving a running injection on. `Broker` consults the gate on every turn: a breach reverts the turn to foundation-only and records the Incident; a failed-closed profile short-circuits to `injection_failed_closed`. The Adapter consults `gate.injecting` before delivering (the per-batch switch is authoritative over the legacy `inject` flag) and checks the system-prompt hash, the tool count and the tool-schema hash against the conversation baseline on every provider request, failing the profile closed on a mutation. `scripts/gate.py` exposes `status`/`enable`/`disable`/`regression`/`clear-regression`/`incidents`. `soft_threshold_regression` (quality floors only) lives in `gate.py` and is re-exported from `evaluation.py`. 41 tests in `tests/test_broker_gate.py`.
 
+**Evidence from #56.** `scripts/broker/report.py` implements the Shadow Report. `build_shadow_report` joins the recorded Route Decisions from the Evidence Log with the `skill_view` use read from the profile's `state.db` (`corpus.read_skill_use`), windows on the session turn's timestamp, and assembles a `ShadowReport`: the profile, the exact Brokered Allowlist as the `InjectionBatch` that enabling would cover, each Hard Gate's status via `check_hard_gates` plus the Incident log, movement against the pre-registered Soft Thresholds via `soft_threshold_regression`, and every turn where the broker differed from actual use or human review with the retrieval/Judgment/Grant attribution. `apply_review` is the only path to `InjectionGate`: approve enables the report's batch, `approve_narrower` enables a proper subset of it, and reject records the review and enables nothing, leaving Shadow Mode running. An approval is refused unless the Soft Thresholds are pre-registered, every checked Hard Gate passed, and no quality floor regressed (a regression also records the expansion block). The review is bound to the report by `report_sha256`. `scripts/shadow_report.py` exposes `build`/`show`/`review`. 27 tests in `tests/test_broker_report.py`.
+
 **Evidence from #55.** `scripts/broker/evaluation.py` replays every Reviewed Case through the real `Broker` against its bound `Recording` with no network and no model, reporting per profile and per split: precision, recall, correct no-skill rate, unauthorised-grant rate, closure/dependency/cycle failures, average Candidate count, average Pack size, duplicate-injection rate and hash agreement, plus retrieval/Judgment/Grant attribution so a wrong outcome is explained. The held-out set is reported separately and `derive_thresholds` reads only the threshold set. `ThresholdRegistry` pre-registers the Soft Thresholds in `corpus/thresholds/<profile>.json`, bound to a digest of the reviewed corpus + Recording claims and the measured baseline, refusing a move unless re-derived against a strictly larger reviewed set. `below_minimum` requires the threshold-setting set itself to reach the Stage 5 minimum, so a profile with enough total cases but too few tuning cases stays in Shadow Mode. `scripts/evaluate.py` exposes `evaluate`/`register`. A real-machine smoke run against the empty pilot corpus wrote nothing and reported `stage: shadow`.
 
 ## In progress and pending
 
-Nothing is half-written. #52 is complete and committed; the next build is unattempted:
+Nothing is half-written. #56 is complete and committed; the next build is unattempted:
 
-- **#56 The Shadow Report and batch review** (Stage 6) — consumes the evaluation and pre-registration #55 produces, and is the review that authorises the switch #52 built.
-- **#53 Decide where Brokered withholding is enforced** (spec B16 open decision; gates the pilot).
+- **#53 Decide where Brokered withholding is enforced** (spec B16 open decision; the remaining gate on the pilot).
 - **#59 Fix the project-setup skills block requirement** (independent, small).
 
 The Adapter's settings are `store`, `profile`, `evidence_dir`, `judgment` (`live` | `recorded` | `first_candidate` | `no_skill`) and `inject` (deprecated; the per-batch gate state under `evidence_dir` is authoritative). Route Decisions are appended to `<evidence_dir>/route_decisions.jsonl`; the API-request evidence handle to `<evidence_dir>/api_requests.jsonl`; the gate state to `<evidence_dir>/gate.json`; Incidents to `<evidence_dir>/gate_incidents.jsonl`.
@@ -80,17 +81,17 @@ The Adapter's settings are `store`, `profile`, `evidence_dir`, `judgment` (`live
 
 ## Next actions
 
-1. Claim #56: `GH_CONFIG_DIR=~/.config/gh-personal gh issue edit 56 --add-assignee @me`, then read the issue, ADR-0019, and the evaluation #55 and the switch #52 delivered.
-2. Populate the corpus for the pilot profile (extraction + Adam's hand review), freeze Recordings, then run `scripts/evaluate.py evaluate` and `register` so the Soft Thresholds are pre-registered before any Shadow Report review.
-3. Before the pilot: #53 decides where Brokered withholding is enforced (B16); #52's gate is the switch and the fail-closed enforcement the pilot turns on.
-4. Run the full suite plus `tests/hermes_adapter/run_shadow_proof.py`, then `code-review` (Standards + Spec), then commit on `main` and close the issue — the pattern used for #45–#55 and #52.
+1. Claim #53: `GH_CONFIG_DIR=~/.config/gh-personal gh issue edit 53 --add-assignee @me`, then decide where Brokered withholding is enforced (B16) and where its Hard Gate is checked.
+2. Populate the corpus for the pilot profile (extraction + Adam's hand review), freeze Recordings, then run `scripts/evaluate.py evaluate` and `register` so the Soft Thresholds are pre-registered.
+3. Run Shadow Mode over real traffic, build a Shadow Report with `scripts/shadow_report.py build`, review it, and only then enable the pilot batch with `review` (#57).
+4. Run the full suite plus `tests/hermes_adapter/run_shadow_proof.py`, then `code-review` (Standards + Spec), then commit on `main` and close the issue — the pattern used for #45–#56.
 
 ## Definition of done
 
-#52 is done: all six acceptance criteria are covered by `tests/test_broker_gate.py` (41 tests)
-— every Hard Gate checked over a Route Decision and on every turn at the `prepare_turn` seam, a
-breach reverting to foundation-only with a recorded Incident naming the gate, a review-gated
-re-enable that the breaching turn cannot flip, injection off until a named batch is enabled, a
-Soft-Threshold regression that blocks expansion without disabling running injection, and the
-gate state observable through `status` and `scripts/gate.py`. The full 336-test suite passes, and
-the change is reviewed on both axes before committing on `main`.
+#56 is done: all six acceptance criteria are covered by `tests/test_broker_report.py` (27 tests)
+— the report assembled from recorded Route Decisions plus observed skill use over a bounded
+window, the profile and exact Brokered Allowlist batch named, each Hard Gate's status and
+Soft-Threshold movement reported, attributed disagreements against actual use and human review,
+the review (approve / reject / approve-narrower) as the only path to the injection switch and
+bound to the report digest, and a rejection enabling nothing while Shadow Mode runs. The full
+363-test suite passes, and the change is reviewed on both axes before committing on `main`.

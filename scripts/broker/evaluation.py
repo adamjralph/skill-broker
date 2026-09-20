@@ -29,7 +29,7 @@ from __future__ import annotations
 import hashlib
 import json
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, fields, replace
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -49,7 +49,7 @@ from .corpus import (
 from .evidence import SessionLedger
 # ``soft_threshold_regression`` is defined in ``gate`` (the module that enforces the expansion
 # block) and re-exported here, where the Soft Thresholds themselves live, for evaluation callers.
-from .gate import soft_threshold_regression
+from .gate import closure_failure_kind, soft_threshold_regression
 from .judgment import RecordingMismatch
 from .types import RouteDecision, TurnOutcome
 
@@ -109,6 +109,15 @@ def attribute(*, failed: bool, ground_truth: str | None, selected: str | None,
     return GRANT_MISS
 
 
+#: The stored integer fields of :class:`SplitMetrics`, named once for ``from_record``.
+_SPLIT_METRIC_FIELDS = (
+    "cases", "granted", "no_skill", "failures", "true_positive", "false_positive",
+    "false_negative", "true_negative", "grants", "unauthorised_grants", "closure_failures",
+    "dependency_failures", "cycle_failures", "candidate_total", "pack_deliveries",
+    "pack_chars_total", "duplicate_suppressions", "hash_agreements", "hash_disagreements",
+)
+
+
 def _rate(numerator: int, denominator: int) -> float | None:
     """A rounded rate, or ``None`` when the denominator is zero (undefined, not zero)."""
     return None if denominator == 0 else round(numerator / denominator, 6)
@@ -117,7 +126,6 @@ def _rate(numerator: int, denominator: int) -> float | None:
 @dataclass(frozen=True)
 class SplitMetrics:
     """One split's measured baseline — counts plus the rates the gate is read from."""
-
     cases: int = 0
     granted: int = 0
     no_skill: int = 0
@@ -199,6 +207,11 @@ class SplitMetrics:
             "hash_agreement_rate": self.hash_agreement_rate,
         }
 
+    @classmethod
+    def from_record(cls, record: Mapping) -> "SplitMetrics":
+        """Rebuild the stored counts from a record; the dataclass fields are the one field list."""
+        return cls(**{field.name: int(record.get(field.name) or 0) for field in fields(cls)})
+
 
 @dataclass(frozen=True)
 class EvaluationReport:
@@ -261,6 +274,18 @@ class SoftThresholds:
             "average_candidates": self.average_candidates,
             "average_pack_chars": self.average_pack_chars,
         }
+
+    @classmethod
+    def from_record(cls, record: Mapping) -> "SoftThresholds":
+        """Rebuild the pre-registered thresholds from their record."""
+        return cls(
+            precision=record.get("precision"),
+            recall=record.get("recall"),
+            correct_no_skill_rate=record.get("correct_no_skill_rate"),
+            duplicate_injection_rate=record.get("duplicate_injection_rate"),
+            average_candidates=record.get("average_candidates"),
+            average_pack_chars=record.get("average_pack_chars"),
+        )
 
 
 @dataclass(frozen=True)
@@ -372,7 +397,7 @@ def _measure(entry: ReviewedCase, decision: RouteDecision,
     selected = decision.grants[0].id if decision.grants else None
     failed = decision.outcome is TurnOutcome.FAILURE
     judgment_primary = decision.judgment.primary if decision.judgment is not None else None
-    closure_kind = _closure_failure_kind(decision.reasons) if failed else None
+    closure_kind = closure_failure_kind(decision.reasons) if failed else None
     recording = recordings.get(case.profile, case.case_sha256)
     return _Measurement(
         reviewed=entry,
@@ -395,17 +420,6 @@ def _measure(entry: ReviewedCase, decision: RouteDecision,
         pack_chars=decision.pack_chars,
         recording_sha256=_claim_digest(recording.claim) if recording is not None else "",
     )
-
-
-def _closure_failure_kind(reasons: Sequence[str]) -> str | None:
-    """Classify a failed Pack's reason as a missing/denied Dependency or a cycle (B7)."""
-    if any("dependency cycle" in reason for reason in reasons):
-        return "cycle"
-    markers = ("unknown dependency", "dependency not authorised", "unknown ID in closure")
-    if any(marker in reason for reason in reasons for marker in markers):
-        return "dependency"
-    return None
-
 
 def _summarize(measurements: Sequence[_Measurement]) -> SplitMetrics:
     """Aggregate one split's measurements into counts and rates."""
