@@ -253,6 +253,26 @@ _Avoid_: ledger, telemetry
 
 ### Evaluation and rollout
 
+**Replay Corpus**:
+The reviewed set of real request Cases used to evaluate routing and pre-register Soft
+Thresholds. The sole home for full request text (ADR-0015), held machine-local.
+_Avoid_: dataset, test set
+
+**Case**:
+One request turn extracted for replay, with its provenance and the profile's Authorised Closure
+at extraction.
+_Avoid_: prompt, sample
+
+**Reviewed Case**:
+A Case whose ground-truth outcome — a Primary Skill or a No-Skill Outcome — has been corrected
+by hand. Only Reviewed Cases count for evaluation and threshold setting.
+_Avoid_: label, example
+
+**Recording**:
+A Jev outcome frozen and bound to its Case by content hash, so replay is deterministic and
+offline.
+_Avoid_: snapshot, fixture
+
 **Hard Gate**:
 A routing-quality condition that must hold regardless of evaluation data. A breach fails the
 profile closed; never negotiated by a corpus or baseline.
