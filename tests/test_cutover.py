@@ -52,8 +52,16 @@ class CutoverTests(unittest.TestCase):
     def external_dirs(self):
         return (yaml.safe_load(self.config.read_text()).get("skills") or {}).get("external_dirs")
 
-    def apply(self):
-        return self.run_cutover("apply", store=self.store, manifest=self.manifest, farm=self.farm)
+    def apply(self, **kwargs):
+        return self.run_cutover("apply", store=self.store, manifest=self.manifest,
+                                farm=self.farm, **kwargs)
+
+    def write_policy(self, foundation, brokered=(), profile="test"):
+        path = self.root / f"{profile}.json"
+        path.write_text(json.dumps({"policy_version": 1, "profile": profile,
+                                    "foundation": list(foundation),
+                                    "brokered": list(brokered)}))
+        return path
 
     def skill(self, root: Path, name: str, body: str = "x") -> Path:
         d = root / name
@@ -201,6 +209,126 @@ class CutoverTests(unittest.TestCase):
         self.run_cutover()
         self.exposures(("novel", "one.novel"), ("beta", "one.beta"))
         self.assertTrue(self.apply()["ok"])
+
+    def test_policy_gate_accepts_a_resolving_foundation(self):
+        self.skill(self.store / "one", "foundation")
+        sm.generate(self.store)
+        self.exposures(("novel", "one.novel"), ("foundation", "one.foundation"))
+        policy = self.write_policy([{"id": "one.foundation"}])
+        self.run_cutover()
+        self.assertTrue(self.apply(policy=policy)["ok"])
+        self.assertEqual(self.external_dirs(), ["/already/there", str(self.farm)])
+
+    def test_policy_gate_fails_closed_when_a_foundation_does_not_resolve(self):
+        self.skill(self.store / "one", "foundation")
+        sm.generate(self.store)
+        self.exposures(("novel", "one.novel"))  # foundation deliberately not exposed
+        policy = self.write_policy([{"id": "one.foundation"}])
+        self.run_cutover()
+        before = self.config.read_bytes()
+        with self.assertRaisesRegex(co.CutoverError, "foundation not resolving: foundation"):
+            self.apply(policy=policy)
+        self.assertEqual(before, self.config.read_bytes())
+
+    def test_policy_gate_requires_a_project_wired_foundation_by_name(self):
+        policy = self.write_policy([{"project": "/p", "name": "method"}])
+        self.run_cutover()
+        with self.assertRaisesRegex(co.CutoverError, "foundation not resolving: method"):
+            self.apply(policy=policy)
+        self.assertEqual(self.external_dirs(), ["/already/there"])
+        self.skill(self.native, "method")
+        self.assertTrue(self.apply(policy=policy)["ok"])
+
+    def test_policy_gate_rejects_a_brokered_skill_in_the_index(self):
+        self.skill(self.store / "one", "brokered", body="store copy")
+        self.skill(self.native, "brokered", body="native copy")
+        sm.generate(self.store)
+        self.exposures(("novel", "one.novel"))
+        policy = self.write_policy([{"id": "one.novel"}], ["one.brokered"])
+        self.run_cutover()
+        with self.assertRaisesRegex(co.CutoverError, "brokered skill in the index: one.brokered"):
+            self.apply(policy=policy)
+        self.assertEqual(self.external_dirs(), ["/already/there"])
+
+    def test_policy_gate_rejects_a_brokered_skill_exposed_by_path(self):
+        self.skill(self.store / "one", "brokered", body="store copy")
+        sm.generate(self.store)
+        self.exposures(("novel", "one.novel"), ("brokered", "one.brokered"))
+        policy = self.write_policy([{"id": "one.novel"}], ["one.brokered"])
+        self.run_cutover()
+        with self.assertRaisesRegex(co.CutoverError, "brokered skill exposed: one.brokered"):
+            self.apply(policy=policy)
+
+    def test_policy_gate_allows_a_brokered_twin_sharing_a_foundation_name(self):
+        self.skill(self.store / "one", "tdd", body="foundation copy")
+        self.skill(self.store / "two", "tdd", body="brokered copy")
+        sm.generate(self.store)
+        self.exposures(("tdd", "one.tdd"))
+        policy = self.write_policy([{"id": "one.tdd"}], ["two.tdd"])
+        self.run_cutover()
+        self.assertTrue(self.apply(policy=policy)["ok"])
+
+    def test_policy_gate_records_the_after_resolution_map(self):
+        foundation = self.skill(self.store / "one", "foundation")
+        sm.generate(self.store)
+        self.exposures(("novel", "one.novel"), ("foundation", "one.foundation"))
+        policy = self.write_policy([{"id": "one.foundation"}])
+        self.run_cutover()
+        self.apply(policy=policy)
+        data = json.loads(self.baseline.read_text())
+        self.assertEqual(data["applied"]["resolution"]["foundation"],
+                         {"realpath": str(foundation.resolve()),
+                          "package_sha256": package_hash(foundation)})
+
+    def test_invalid_policy_fails_closed_before_any_change(self):
+        policy = self.write_policy([{"id": "missing.id"}])
+        self.run_cutover()
+        before = self.config.read_bytes()
+        with self.assertRaisesRegex(co.CutoverError, "unknown ID: 'missing.id'"):
+            self.apply(policy=policy)
+        self.assertEqual(before, self.config.read_bytes())
+        self.assertFalse(self.farm.exists())
+
+    def test_verify_with_policy_rechecks_the_policy_conditions(self):
+        self.skill(self.store / "one", "foundation")
+        sm.generate(self.store)
+        self.exposures(("novel", "one.novel"), ("foundation", "one.foundation"))
+        policy = self.write_policy([{"id": "one.foundation"}])
+        self.run_cutover()
+        self.apply(policy=policy)
+        self.assertTrue(self.run_cutover("verify", store=self.store, manifest=self.manifest,
+                                         farm=self.farm, policy=policy)["ok"])
+        # The brokered skill reappears in the automatic index after the applied Cutover.
+        self.skill(self.store / "one", "brokered", body="store copy")
+        self.skill(self.native, "brokered", body="native copy")
+        sm.generate(self.store)
+        policy = self.write_policy([{"id": "one.foundation"}], ["one.brokered"])
+        with self.assertRaisesRegex(co.CutoverError, "brokered skill in the index: one.brokered"):
+            self.run_cutover("verify", store=self.store, manifest=self.manifest,
+                             farm=self.farm, policy=policy)
+
+    def test_cli_apply_and_verify_accept_a_policy(self):
+        self.skill(self.store / "one", "foundation")
+        sm.generate(self.store)
+        self.exposures(("novel", "one.novel"), ("foundation", "one.foundation"))
+        policy = self.write_policy([{"id": "one.foundation"}])
+        script = str(Path(co.__file__))
+        subprocess.run(
+            [sys.executable, script, "baseline", "--consumer", "test", "--config", str(self.config),
+             "--baseline", str(self.baseline), "--roots", str(self.native)],
+            text=True, capture_output=True, check=True)
+        apply = subprocess.run(
+            [sys.executable, script, "apply", "--store", str(self.store), "--manifest",
+             str(self.manifest), "--farm", str(self.farm), "--config", str(self.config),
+             "--baseline", str(self.baseline), "--policy", str(policy)],
+            text=True, capture_output=True)
+        self.assertEqual(apply.returncode, 0, apply.stderr + apply.stdout)
+        verify = subprocess.run(
+            [sys.executable, script, "verify", "--store", str(self.store), "--manifest",
+             str(self.manifest), "--farm", str(self.farm), "--config", str(self.config),
+             "--policy", str(policy), "--roots", str(self.native)],
+            text=True, capture_output=True)
+        self.assertEqual(verify.returncode, 0, verify.stderr + verify.stdout)
 
     def test_cli_baseline_and_apply_exit_statuses(self):
         script = str(Path(co.__file__))

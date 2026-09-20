@@ -7,9 +7,8 @@ and verifies the Consumer's farm (reusing ``scripts/exposure_farm.py``), makes o
 to the Consumer's loader config, and can undo exactly that edit.
 
 The loader config is Hermes's ``config.yaml``: the farm path is added to
-``skills.external_dirs`` byte-preservingly, and rollback removes exactly that entry.  No
-Exposure Manifest is derived here (Hermes policy derivation is separate, wayfinder #33), so the
-gate implements the policy-free conditions of wayfinder #11 section 6:
+``skills.external_dirs`` byte-preservingly, and rollback removes exactly that entry.  The gate
+implements wayfinder #11 section 6.  Without a policy it covers the policy-free conditions:
 
 1. the Exposure Manifest validates against the Store Manifest;
 2. every farm link resolves into the store;
@@ -17,17 +16,27 @@ gate implements the policy-free conditions of wayfinder #11 section 6:
 4. no name that resolved before Cutover stops resolving (zero regressions);
 5. every cross-skill reference in the resolving set resolves.
 
-Conditions that need the Profile Policy - Foundation Skills resolving natively, and no Brokered
-Skill in the automatic index - are deferred to wayfinder #33 and are not claimed here.  The
-before/after resolution maps are recorded so those checks can be layered on once policy exists.
+With ``--policy PATH`` - an authored ``<store>/policies/<profile>.json`` (ADR-0018) - the gate
+first validates the policy against the verified Store Manifest via ``scripts/profile_policy.py``
+and then adds the two policy-dependent conditions:
+
+4'. every Foundation Skill still resolves: store-backed entries by their indexed Name,
+    project-wired entries by their Name;
+5'. no Brokered Skill appears in the automatic index, by canonical store realpath or by Name -
+    except a Brokered twin that legitimately shares a Foundation's Name (the Name Collision case
+    of ADR-0018, whose twin is brokered because Hermes indexes on frontmatter ``name``).
+
+The before/after resolution maps are both recorded: the baseline holds the before map under
+``resolution`` and, once Cutover is applied, the after map under ``applied.resolution``.
 
 Usage::
 
     python3 scripts/cutover.py baseline --consumer NAME --config PATH --baseline PATH \\
         --roots DIR [--roots DIR ...]
     python3 scripts/cutover.py apply    --store DIR --manifest PATH --farm DIR \\
-        --config PATH --baseline PATH
-    python3 scripts/cutover.py verify   --store DIR --manifest PATH --farm DIR --config PATH
+        --config PATH --baseline PATH [--policy PATH]
+    python3 scripts/cutover.py verify   --store DIR --manifest PATH --farm DIR --config PATH \\
+        [--policy PATH] [--roots DIR ...]
     python3 scripts/cutover.py rollback --config PATH --baseline PATH
 
 Reversible implementation defaults: the baseline is a machine-local JSON file under
@@ -49,6 +58,7 @@ import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import exposure_farm as ef  # noqa: E402
+import profile_policy as pp  # noqa: E402
 from skill_audit import EXCLUDED_DIR_NAMES, frontmatter_name, hash_package, references  # noqa: E402
 
 GENERATOR = "scripts/cutover.py"
@@ -207,12 +217,44 @@ def _validate_external(text: str, path: str, present: bool) -> None:
         raise CutoverError(f"config edit failed: expected {path} {state} in skills.external_dirs")
 
 
-def _gate(before: dict, roots, farm: Path) -> list[str]:
-    """Policy-free wayfinder #11 section 6 checks: zero regressions, resolvable references.
+def _policy_inputs(store: Path, policy) -> tuple[dict, dict]:
+    """The verified Store Manifest identities and one validated Profile Policy (ADR-0018)."""
+    path = Path(policy).expanduser()
+    identities = pp.identities(store)
+    data = pp.load(path)
+    problems = pp.validate(data, identities, filename=path.stem)
+    if problems:
+        raise CutoverError("policy: " + "; ".join(problems))
+    return data, identities
 
-    Foundation Skills resolving natively, and no Brokered Skill in the automatic index, need the
-    Profile Policy (wayfinder #33) and are deliberately not claimed here.
-    """
+
+def _policy_problems(policy: dict, identities: dict, store: Path, after: dict) -> list[str]:
+    """wayfinder #11 section 6 items 4-5: the Profile Policy conditions (ADR-0018)."""
+    problems: list[str] = []
+    foundation_names: set[str] = set()
+    for entry in policy["foundation"]:
+        if set(entry) == {"project", "name"}:
+            name = entry["name"]
+        else:
+            # An exposure alias renames a farm path, never the indexed Name (ADR-0018), and the
+            # resolution map is keyed by the indexed frontmatter Name.
+            name = identities[entry["id"]]["name"]
+        foundation_names.add(name)
+        if name not in after:
+            problems.append(f"foundation not resolving: {name}")
+    after_paths = {row["realpath"] for row in after.values()}
+    for ident in policy.get("brokered", []):
+        row = identities[ident]
+        if str((store / row["path"]).resolve()) in after_paths:
+            problems.append(f"brokered skill exposed: {ident}")
+        if row["name"] in after and row["name"] not in foundation_names:
+            problems.append(f"brokered skill in the index: {ident}")
+    return problems
+
+
+def _gate(before: dict, roots, farm: Path, policy: dict | None = None,
+          identities: dict | None = None, store: Path | None = None) -> tuple[list[str], dict]:
+    """wayfinder #11 section 6 checks, policy-free plus (when given) the policy conditions."""
     after = resolution([*roots, farm])
     problems = [f"regression: {name} no longer resolves" for name in sorted(before)
                 if name not in after]
@@ -220,7 +262,9 @@ def _gate(before: dict, roots, farm: Path) -> list[str]:
         for target in references(Path(row["realpath"])):
             if target not in after:
                 problems.append(f"unresolved reference: {name} -> {target}")
-    return problems
+    if policy is not None:
+        problems.extend(_policy_problems(policy, identities, store, after))
+    return problems, after
 
 
 def _plan_inputs(store, manifest, farm) -> tuple[Path, Path, Path]:
@@ -230,14 +274,19 @@ def _plan_inputs(store, manifest, farm) -> tuple[Path, Path, Path]:
             Path(farm).expanduser())
 
 
-def _apply(data: dict, baseline: Path, config: Path, store, manifest, farm) -> dict:
+def _apply(data: dict, baseline: Path, config: Path, store, manifest, farm,
+           policy=None) -> dict:
     if str(config) != data["config"]["path"]:
         raise CutoverError(f"baseline config {data['config']['path']} does not match --config {config}")
     store, manifest, farm = _plan_inputs(store, manifest, farm)
     farm = farm.parent.resolve() / farm.name
+    policy_data, identities = (None, None)
+    if policy is not None:
+        policy_data, identities = _policy_inputs(store, policy)
     generated = ef.run("generate", store, manifest, farm)
     ef.run("verify", store, manifest, farm)
-    problems = _gate(data["resolution"], data["roots"], farm)
+    problems, after = _gate(data["resolution"], data["roots"], farm,
+                            policy=policy_data, identities=identities, store=store)
     if problems:
         raise CutoverError("; ".join(problems))
     text = config.read_text()
@@ -246,17 +295,24 @@ def _apply(data: dict, baseline: Path, config: Path, store, manifest, farm) -> d
         _validate_external(updated, str(farm), present=True)
         config.write_text(updated)
     data["applied"] = {"farm": str(farm),
-                       "config_sha256": hashlib.sha256(config.read_text().encode()).hexdigest()}
+                       "config_sha256": hashlib.sha256(config.read_text().encode()).hexdigest(),
+                       "resolution": after}
     _write_baseline(baseline, data)
     return {"ok": True, "consumer": data["consumer"], "config": str(config), "farm": str(farm),
             "changed": changed, "exposures": generated["exposures"]}
 
 
-def _verify(config: Path, store, manifest, farm) -> dict:
+def _verify(config: Path, store, manifest, farm, policy=None, roots=()) -> dict:
     store, manifest, farm = _plan_inputs(store, manifest, farm)
     result = ef.run("verify", store, manifest, farm)
     if str(farm) not in _external_dirs(config.read_text()):
         raise CutoverError(f"config does not list the farm in skills.external_dirs: {farm}")
+    if policy is not None:
+        policy_data, identities = _policy_inputs(store, policy)
+        problems, _ = _gate({}, roots, farm, policy=policy_data, identities=identities,
+                            store=store)
+        if problems:
+            raise CutoverError("; ".join(problems))
     return {"ok": True, "consumer": result["consumer"], "config": str(config),
             "farm": str(farm), "exposures": result["exposures"]}
 
@@ -278,13 +334,13 @@ def _rollback(data: dict, baseline: Path, config: Path) -> dict:
 
 def run(command: str, *, config: Path, baseline: Path | None = None, consumer: str = "",
         roots=(), store: Path | None = None, manifest: Path | None = None,
-        farm: Path | None = None) -> dict:
+        farm: Path | None = None, policy: Path | None = None) -> dict:
     """Capture a baseline, apply the Cutover, verify it, or roll it back."""
     if command not in {"baseline", "apply", "verify", "rollback"}:
         raise CutoverError(f"unknown command: {command}")
     config = Path(config).expanduser()
     if command == "verify":
-        return _verify(config, store, manifest, farm)
+        return _verify(config, store, manifest, farm, policy=policy, roots=roots)
     if baseline is None:
         raise CutoverError(f"--baseline is required for {command}")
     baseline = Path(baseline).expanduser()
@@ -298,7 +354,7 @@ def run(command: str, *, config: Path, baseline: Path | None = None, consumer: s
                 "exposures": len(data["resolution"])}
     data = _read_baseline(baseline)
     if command == "apply":
-        return _apply(data, baseline, config, store, manifest, farm)
+        return _apply(data, baseline, config, store, manifest, farm, policy=policy)
     return _rollback(data, baseline, config)
 
 
@@ -313,6 +369,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--store", type=Path)
     parser.add_argument("--manifest", type=Path)
     parser.add_argument("--farm", type=Path)
+    parser.add_argument("--policy", type=Path,
+                        help="Profile Policy (<store>/policies/<profile>.json); adds items 4-5")
     args = parser.parse_args(argv)
     baseline = args.baseline
     if baseline is None:
@@ -324,8 +382,8 @@ def main(argv: list[str] | None = None) -> int:
     try:
         result = run(args.command, config=args.config, baseline=baseline,
                      consumer=args.consumer, roots=args.roots, store=args.store,
-                     manifest=args.manifest, farm=args.farm)
-    except (CutoverError, ef.FarmError, OSError, ValueError) as exc:
+                     manifest=args.manifest, farm=args.farm, policy=args.policy)
+    except (CutoverError, ef.FarmError, pp.PolicyError, OSError, ValueError) as exc:
         print(json.dumps({"ok": False, "problems": [str(exc)]}, indent=2))
         return 1
     print(json.dumps(result, indent=2))

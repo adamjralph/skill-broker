@@ -81,15 +81,16 @@ def _object(pairs):
     return result
 
 
-def _load(path: Path):
+def load(path: Path):
+    """Load policy/JSON with duplicate keys rejected."""
     return json.loads(path.read_text(), object_pairs_hook=_object)
 
 
-def _identities(store: Path) -> dict:
+def identities(store: Path) -> dict:
     """The verified Store Manifest's ``{id: row}``; fails closed on drift."""
     if not store.is_dir():
         raise PolicyError(f"store not found: {store}")
-    committed = _load(store / sm.MANIFEST_NAME)
+    committed = load(store / sm.MANIFEST_NAME)
     expected = sm.build(store)
     if committed != expected:
         raise PolicyError("Store Manifest drift; regenerate and review it first")
@@ -184,17 +185,17 @@ def _policy_files(policies_dir: Path) -> list[Path]:
 
 def validate_dir(store: Path, policies_dir: Path | None = None) -> list[str]:
     """Validate every policy in the store's ``policies/`` directory, including uniqueness."""
-    identities = _identities(store)
+    identities_by_id = identities(store)
     policies_dir = policies_dir or (store / POLICIES_DIR)
     problems: list[str] = []
     by_profile: dict[str, str] = {}
     for path in _policy_files(policies_dir):
         try:
-            policy = _load(path)
+            policy = load(path)
         except (PolicyError, OSError, ValueError) as exc:
             problems.append(f"{path.name}: {exc}")
             continue
-        problems.extend(f"{path.name}: {p}" for p in validate(policy, identities,
+        problems.extend(f"{path.name}: {p}" for p in validate(policy, identities_by_id,
                                                                filename=path.stem))
         profile = policy.get("profile") if isinstance(policy, dict) else None
         if isinstance(profile, str) and profile:
@@ -231,14 +232,14 @@ def run(command: str, store: Path, *, policy: Path | None = None,
     store = Path(store).expanduser().resolve()
     if command == "validate":
         if policy is not None:
-            identities = _identities(store)
+            identities_by_id = identities(store)
             path = Path(policy).expanduser()
             problems = [f"{path.name}: {p}"
-                        for p in validate(_load(path), identities, filename=path.stem)]
+                        for p in validate(load(path), identities_by_id, filename=path.stem)]
             for other in _policy_files(path.parent):
                 if other == path:
                     continue
-                sibling = _load(other)
+                sibling = load(other)
                 if isinstance(sibling, dict) and sibling.get("profile") == path.stem:
                     problems.append(f"{path.name}: profile {path.stem!r} also claimed by {other.name}")
             if problems:
@@ -253,7 +254,7 @@ def run(command: str, store: Path, *, policy: Path | None = None,
     if policy is None:
         raise PolicyError("--policy is required for derive")
     path = Path(policy).expanduser()
-    manifest = derive(_load(path), _identities(store), filename=path.stem)
+    manifest = derive(load(path), identities(store), filename=path.stem)
     if out is not None:
         dest = Path(out).expanduser()
         dest.write_text(sm.serialize(manifest))
