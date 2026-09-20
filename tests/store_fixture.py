@@ -118,8 +118,12 @@ def make_store(
     brokered: Sequence[str] | None = None,
     denied: Sequence[str] = (),
     preferred: Sequence[str] = (),
+    **policy_extra: object,
 ) -> StoreFixture:
     """Build a temporary store that already passes the existing manifest and policy validators.
+
+    ``policy_extra`` is written verbatim into the policy, so a caller can add ``limits`` or
+    ``thresholds`` entries.
 
     Callers own the result's lifetime: ``close()`` it, or use it as a context manager.
     """
@@ -139,7 +143,7 @@ def make_store(
     sm.generate(root)
 
     policy_path = write_policy(root, profile, foundation=foundation, brokered=brokered,
-                               denied=list(denied), preferred=list(preferred))
+                               denied=list(denied), preferred=list(preferred), **policy_extra)
     return StoreFixture(root=root, profile=profile, policy_path=policy_path, _tmp=tmp)
 
 

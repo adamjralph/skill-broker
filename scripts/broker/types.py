@@ -25,6 +25,19 @@ class TurnOutcome(str, Enum):
     FAILURE = "failure"
 
 
+class PackDelivery(str, Enum):
+    """How a Skill Pack's content reaches the turn (CONTEXT.md "Pack Delivery", ADR-0010).
+
+    ``INLINE`` means the whole Pack rides the Intervention itself; ``BY_REFERENCE`` means the
+    Pack is over the effective inline budget and Hermes's native spill supplies a head/tail
+    preview plus the path to the full text. Independent of which Skills the Pack contains: size
+    never changes the grants.
+    """
+
+    INLINE = "inline"
+    BY_REFERENCE = "by_reference"
+
+
 @dataclass(frozen=True)
 class ResolvedSkillVersion:
     """One Skill at one Version: its ID plus the canonical package hash (CONTEXT.md)."""
@@ -79,9 +92,11 @@ class Judgment:
 class RouteDecision:
     """The complete record of one routing outcome (CONTEXT.md), minus anything textual.
 
-    Later stages extend it with limits, timing and model usage; tickets #46-#48 record the
-    request identity, the profile, the resolved Authorised Closure, the ranked Candidate set,
-    the Judgment and the Grants — all of which are metadata or hashes.
+    Tickets #46-#48 record the request identity, the profile, the resolved Authorised Closure,
+    the ranked Candidate set, the Judgment and the Grants — all metadata or hashes. Ticket #49
+    adds the Pack Delivery mode, the Pack's size and hash, and the effective spill budget, so a
+    reviewer can tell whether a turn delivered under a bounded or an unbounded cap. Timing and
+    model usage follow in later stages.
     """
 
     profile: str
@@ -95,6 +110,10 @@ class RouteDecision:
     candidates: tuple[Candidate, ...] = ()
     judgment: Judgment | None = None
     grants: tuple[ResolvedSkillVersion, ...] = ()
+    delivery: PackDelivery | None = None
+    pack_chars: int | None = None
+    pack_sha256: str | None = None
+    budget: dict | None = None
 
     def to_record(self) -> dict:
         return {
@@ -108,6 +127,10 @@ class RouteDecision:
             "candidates": [candidate.to_record() for candidate in self.candidates],
             "judgment": self.judgment.to_record() if self.judgment is not None else None,
             "grants": [entry.to_record() for entry in self.grants],
+            "delivery": self.delivery.value if self.delivery is not None else None,
+            "pack_chars": self.pack_chars,
+            "pack_sha256": self.pack_sha256,
+            "budget": self.budget,
         }
 
 
@@ -123,7 +146,7 @@ class InterventionResult:
     reasons: tuple[str, ...] = ()
     grants: tuple[ResolvedSkillVersion, ...] = ()
     pack: str | None = None
-    delivery: str | None = None
+    delivery: PackDelivery | None = None
     decision: RouteDecision | None = None
 
     @property

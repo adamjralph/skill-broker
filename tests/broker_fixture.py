@@ -14,6 +14,9 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from store_fixture import StoreFixture  # noqa: E402
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
+import store_manifest as sm  # noqa: E402
+
 
 class RecordingEvidenceLog:
     """An in-memory ``EvidenceLog``: keeps every Route Decision it is handed, in order."""
@@ -37,6 +40,23 @@ class ScriptedJudgmentSource:
 
     def judge(self, request, candidates):
         return self.claims.pop(0)
+
+
+class TamperingJudgmentSource:
+    """Answers one claim, corrupting a Skill's ``SKILL.md`` first.
+
+    The Judgment Source is the one collaborator called between the Store Manifest verification
+    and Pack assembly, so it is where a test can stage delivery-time drift.
+    """
+
+    def __init__(self, claim, skill_md: Path, text: str = "\nTampered after verification.\n") -> None:
+        self.claim = claim
+        self.skill_md = Path(skill_md)
+        self.text = text
+
+    def judge(self, request, candidates):
+        self.skill_md.write_text(self.skill_md.read_text() + self.text)
+        return self.claim
 
 
 def judgment_claim(candidate_ids, *, primary, confidence=0.9, no_skill=0.1):
@@ -77,3 +97,32 @@ def corrupt_policy(fixture: StoreFixture) -> None:
     """Write a policy that is valid JSON but fails the policy validator."""
     fixture.policy_path.write_text(json.dumps({"policy_version": 1, "profile": fixture.profile,
                                                "foundation": [], "surprise": True}))
+
+
+def add_progressive_disclosure(fixture: StoreFixture, identity, *,
+                               content: str = "PROGRESSIVE-DISCLOSURE-CANARY") -> list[Path]:
+    """Give one identity references/, scripts/ and templates/ files, then regenerate the
+    manifest so the store still verifies (the package hash now covers these files).
+
+    Returns the files written, so a test can name exactly what must never enter a Pack.
+    """
+    skill_dir = fixture.root / identity.path
+    written: list[Path] = []
+    for subdir, filename in (("references", "notes.md"), ("scripts", "run.py"),
+                             ("templates", "template.md")):
+        path = skill_dir / subdir
+        path.mkdir(exist_ok=True)
+        file = path / filename
+        file.write_text(f"{content}:{subdir}\n")
+        written.append(file)
+    sm.generate(fixture.root)
+    return written
+
+
+def append_invalid_utf8(fixture: StoreFixture, identity, *, suffix: bytes = b"\xff\xfe\n") -> Path:
+    """Make a skill's ``SKILL.md`` invalid UTF-8 and regenerate the manifest, so the store
+    verifies but the delivered bytes cannot be faithfully decoded into a Pack body."""
+    path = fixture.root / identity.path / "SKILL.md"
+    path.write_bytes(path.read_bytes() + suffix)
+    sm.generate(fixture.root)
+    return path

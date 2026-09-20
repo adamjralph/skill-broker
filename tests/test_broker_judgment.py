@@ -58,7 +58,8 @@ class JudgmentTest(StoreFixtureTestCase):
         self.assertEqual(result.grants[0].version,
                          self.store.identities()[ALIASED.id]["package_sha256"])
         self.assertEqual(decision.grants, result.grants)
-        self.assertIsNone(result.pack)
+        self.assertIsNotNone(result.pack)
+        self.assertIsNotNone(decision.delivery)
 
     def test_a_non_candidate_primary_is_rejected_and_grants_nothing(self) -> None:
         result, decision = self.turn(ScriptedJudgmentSource(

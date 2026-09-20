@@ -11,7 +11,44 @@ before delivery).
 
 from __future__ import annotations
 
+from collections.abc import Iterable
+
 from .types import ResolvedSkillVersion
+
+
+def dependency_closure(primary_id: str, identities: dict[str, dict],
+                       denied: Iterable[str] = ()) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """The Primary plus its transitive declared Dependencies, or the problems that close it.
+
+    The order is deterministic and puts the Primary first, so a Pack's head is the Primary's
+    opening. A Dependency the manifest does not carry, one the policy Denies, and a cycle are
+    each recorded rather than silently dropped (ADR-0006/B7).
+    """
+    denied = set(denied)
+    ordered: list[str] = []
+    seen: set[str] = set()
+    problems: list[str] = []
+
+    def visit(ident: str, path: tuple[str, ...]) -> None:
+        if ident in path:
+            problems.append("dependency cycle: " + " -> ".join((*path, ident)))
+            return
+        if ident in seen:
+            return
+        seen.add(ident)
+        if ident in denied:
+            problems.append(f"dependency not authorised: {ident}")
+            return
+        row = identities.get(ident)
+        if row is None:
+            problems.append(f"unknown dependency: {ident}")
+            return
+        ordered.append(ident)
+        for dependency in sorted(row.get("dependencies", ())):
+            visit(dependency, (*path, ident))
+
+    visit(primary_id, ())
+    return tuple(ordered), tuple(sorted(problems))
 
 
 def authorised_closure(policy: dict, identities: dict[str, dict]) -> tuple[

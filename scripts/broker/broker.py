@@ -6,8 +6,9 @@ request, a profile and session context. Everything else is private: callers lear
 manifest layout, policy shape, retrieval, thresholds or content assembly.
 
 Ticket #46 builds the seam, the Authorised Closure, the explicit No-Skill Outcome and the Route
-Decision. Nothing is judged, granted or delivered yet, so every valid turn ends in a No-Skill
-Outcome; retrieval (#47), Judgment and Grant (#48) and Pack assembly (#49) fill the pipeline in.
+Decision; #47 fills retrieval; #48 Judgment and the Grant; #49 Pack assembly, Pack Delivery
+modes and duplicate suppression. Everything is visible in the Intervention Result and the
+recorded Route Decision.
 """
 
 from __future__ import annotations
@@ -23,6 +24,7 @@ from .closure import authorised_closure
 from .evidence import SessionLedger
 from .judgment import grant, validate
 from .metadata import candidate_profile
+from .pack import HookConfig, Pack, build_pack, resolve_budget
 from .retrieval import CANDIDATE_LIMIT, rank
 from .types import (
     Candidate,
@@ -45,6 +47,7 @@ class Broker:
         policies_dir: Path | str | None = None,
         judgment_source=None,
         session_ledger=None,
+        hook: HookConfig | None = None,
     ) -> None:
         self._store = Path(store)
         self._policies_dir = (Path(policies_dir) if policies_dir is not None
@@ -52,6 +55,7 @@ class Broker:
         self._judgment_source = judgment_source
         self._evidence_log = evidence_log
         self._session_ledger = session_ledger if session_ledger is not None else SessionLedger()
+        self._hook = hook if hook is not None else HookConfig()
 
     def prepare_turn(
         self,
@@ -61,8 +65,10 @@ class Broker:
     ) -> InterventionResult:
         """Decide this turn's intervention.
 
-        The Authorised Closure is resolved and ranked into a Candidate set; exactly one Route
-        Decision is always appended. Nothing is judged, granted or delivered in this ticket.
+        The Authorised Closure is resolved and ranked into a Candidate set, a Judgment is asked
+        and validated, a Grant is minted only in deterministic code, and the granted Pack is
+        assembled and delivered — inline or by reference — unless it repeats content this
+        conversation already supplied. Exactly one Route Decision is always appended.
         """
         reasons: list[str] = []
         closure: tuple[ResolvedSkillVersion, ...] = ()
@@ -70,6 +76,8 @@ class Broker:
         judgment: Judgment | None = None
         grants: tuple[ResolvedSkillVersion, ...] = ()
         outcome = TurnOutcome.NO_SKILL
+        pack: Pack | None = None
+        budget = resolve_budget(self._hook, {})[0]
 
         problems = sm.verify(self._store)
         if problems:
@@ -79,11 +87,15 @@ class Broker:
         else:
             identities = {row["id"]: row for row in sm.build(self._store)["identities"]}
             policy, policy_problems = self._policy(profile, identities)
+            budget, budget_problems = resolve_budget(self._hook, policy)
             if policy is None:
                 reasons.append("policy_missing")
             elif policy_problems:
                 reasons.append("policy_invalid")
                 reasons.extend(policy_problems)
+            elif budget_problems:
+                reasons.append("policy_budget_invalid")
+                reasons.extend(budget_problems)
             else:
                 closure, closure_problems = authorised_closure(policy, identities)
                 reasons.extend(closure_problems)
@@ -92,6 +104,18 @@ class Broker:
                 if self._judgment_source is not None:
                     outcome, judgment, grants, problems = self._judge(request, candidates, closure)
                     reasons.extend(problems)
+                    if outcome is TurnOutcome.GRANTED and grants:
+                        pack, pack_problems = build_pack(
+                            store=self._store, profile=profile, primary=grants[0],
+                            identities=identities, denied=policy.get("denied", ()), budget=budget)
+                        if pack_problems:
+                            outcome = TurnOutcome.FAILURE
+                            reasons.extend(pack_problems)
+                            pack = None
+                        else:
+                            pack, suppressed = self._dedupe(pack, session_context)
+                            if suppressed:
+                                reasons.append("duplicate_suppressed")
 
         decision = RouteDecision(
             profile=profile,
@@ -105,10 +129,36 @@ class Broker:
             candidates=candidates,
             judgment=judgment,
             grants=grants,
+            delivery=pack.delivery if pack is not None else None,
+            pack_chars=len(pack.text) if pack is not None else None,
+            pack_sha256=(hashlib.sha256(pack.text.encode("utf-8")).hexdigest()
+                         if pack is not None else None),
+            budget=budget.to_record(),
         )
         self._evidence_log.append(decision)
         return InterventionResult(outcome=outcome, reasons=decision.reasons, grants=grants,
+                                  pack=pack.text if pack is not None else None,
+                                  delivery=pack.delivery if pack is not None else None,
                                   decision=decision)
+
+    def _dedupe(self, pack: Pack, session_context: Mapping[str, Any] | None) -> tuple[
+            Pack | None, bool]:
+        """Suppress a Pack whose every content hash is already supplied in this conversation.
+
+        The Session Ledger is evidence, never a lease: authority was already re-derived above,
+        and a turn that supplies anything new still delivers. Suppression is whole-Intervention
+        (ADR-0010 keeps a Pack complete or absent), so a Pack with a mix of new and already
+        supplied content is delivered complete rather than partially trimmed. ``(None, True)``
+        records the suppression; ``(pack, False)`` remembers the supplied hashes.
+        """
+        session_id = (session_context or {}).get("session_id")
+        if not session_id or self._session_ledger is None:
+            return pack, False
+        supplied = self._session_ledger.supplied(session_id)
+        if set(pack.hashes) <= set(supplied):
+            return None, True
+        self._session_ledger.remember(session_id, pack.hashes)
+        return pack, False
 
     def _judge(self, request: str, candidates: tuple[Candidate, ...],
                closure: tuple[ResolvedSkillVersion, ...]) -> tuple[
