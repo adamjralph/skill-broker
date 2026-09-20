@@ -7,7 +7,8 @@ Given a project root (default: the nearest `.git` ancestor of the cwd):
 2. discovers the project's authored Skills (any directory holding a `SKILL.md`) and symlinks
    each one into `<root>/.agents/skills/<name>` — additive, never overwriting, never deleting;
 3. adds the resolved `<root>` to `skills.trusted_project_dirs` in `~/.hermes/config.yaml`,
-   idempotently and preserving every other byte of the config.
+   creating the `skills:` block when the config has none, idempotently and preserving every
+   other byte of the config.
 
 Every change is printed, and `--undo` reverses exactly what a previous run added, using the
 state file `<root>/.agents/project-setup.json`.
@@ -108,7 +109,13 @@ def add_trusted_root(text: str, root: str) -> tuple[str, bool]:
     lines = text.splitlines(keepends=True)
     block = _top_block(lines, "skills")
     if block is None:
-        raise SetupError("config has no top-level `skills:` key")
+        if _has_inline_skills_key(lines):
+            raise SetupError("config's top-level `skills:` key is inline, not a block")
+        at = _create_block_index(lines)
+        if at and not lines[at - 1].endswith("\n"):
+            raise SetupError("cannot create the `skills:` block: no line break to insert after")
+        lines[at:at] = ["skills:\n", "  trusted_project_dirs:\n", f"    - {root}\n"]
+        return "".join(lines), True
     start, end = block
     key_i = _child_key(lines, start, end, "trusted_project_dirs")
     if key_i is None:
@@ -148,6 +155,55 @@ def remove_trusted_root(text: str, root: str) -> tuple[str, bool]:
     return "".join(lines), True
 
 
+def _has_skills_block(text: str) -> bool:
+    return _top_block(text.splitlines(keepends=True), "skills") is not None
+
+
+def _has_inline_skills_key(lines: list[str]) -> bool:
+    """True when a top-level ``skills:`` key exists in inline form (``skills: {...}``)."""
+    return any(not line[0].isspace() and line.rstrip("\n").startswith("skills:")
+               for line in lines if line.strip())
+
+
+def _create_block_index(lines: list[str]) -> int:
+    """Index just past the last top-level block, before any trailing blank lines."""
+    last = next((i for i, line in enumerate(lines) if line.strip() and not line[0].isspace()),
+                None)
+    if last is None:
+        return 0
+    index = len(lines)
+    while index > last + 1 and not lines[index - 1].strip():
+        index -= 1
+    return index
+
+
+def remove_created_skills_block(text: str, root: str) -> tuple[str, bool]:
+    """Undo a ``skills:`` block this tool created, restoring the config exactly.
+
+    Fails closed unless the block holds nothing but our own ``trusted_project_dirs`` entry,
+    so undo never discards another writer's keys.
+    """
+    lines = text.splitlines(keepends=True)
+    block = _top_block(lines, "skills")
+    if block is None:
+        return text, False
+    start, end = block
+    key_i = _child_key(lines, start, end, "trusted_project_dirs")
+    if key_i is None:
+        raise SetupError("undo: the created `skills:` block has no trusted_project_dirs")
+    first, last = _entry_span(lines, key_i, end)
+    entries = [] if first is None else [lines[i] for i in range(first, last + 1)]
+    if entries != [f"    - {root}\n"]:
+        raise SetupError("undo: the created `skills:` block was modified")
+    content = {key_i}
+    if first is not None:
+        content.update(range(first, last + 1))
+    if {i for i in range(start + 1, end) if lines[i].strip()} != content:
+        raise SetupError("undo: the created `skills:` block was modified")
+    del lines[start:max(content) + 1]
+    return "".join(lines), True
+
+
 def _validate_config(text: str, root: str, present: bool) -> None:
     data = yaml.safe_load(text)
     dirs = (data.get("skills") or {}).get("trusted_project_dirs") or []
@@ -161,7 +217,8 @@ def _validate_config(text: str, root: str, present: bool) -> None:
 
 def load_state(path: Path) -> dict:
     if not path.exists():
-        return {"created_links": [], "trusted_root_added": False}
+        return {"created_links": [], "trusted_root_added": False,
+                "created_skills_block": False}
     return json.loads(path.read_text())
 
 
@@ -188,7 +245,10 @@ def setup(project: Path, config: Path, undo: bool = False) -> list[str]:
                 messages.append(f"left {link_path} in place (not a symlink we created)")
         if state.get("trusted_root_added"):
             text = config.read_text()
-            updated, changed = remove_trusted_root(text, str(project))
+            if state.get("created_skills_block"):
+                updated, changed = remove_created_skills_block(text, str(project))
+            else:
+                updated, changed = remove_trusted_root(text, str(project))
             if changed:
                 _validate_config(updated, str(project), present=False)
                 config.write_text(updated)
@@ -212,6 +272,7 @@ def setup(project: Path, config: Path, undo: bool = False) -> list[str]:
         messages.append(f"linked {link} -> {skill_dir}")
 
     text = config.read_text()
+    created_block = not _has_skills_block(text)
     updated, added = add_trusted_root(text, str(project))
     if added:
         _validate_config(updated, str(project), present=True)
@@ -222,6 +283,7 @@ def setup(project: Path, config: Path, undo: bool = False) -> list[str]:
 
     state["created_links"] = sorted(created)
     state["trusted_root_added"] = bool(state.get("trusted_root_added")) or added
+    state["created_skills_block"] = bool(state.get("created_skills_block")) or created_block
     save_state(state_path, state)
     messages.append(f"wrote state file {state_path}")
     return messages
