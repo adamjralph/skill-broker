@@ -174,6 +174,55 @@ class CutoverTests(unittest.TestCase):
         self.run_cutover("rollback")
         self.assertEqual(self.external_dirs(), [])
 
+    def test_apply_creates_the_skills_block_after_the_last_top_level_key(self):
+        self.config.write_text("model: x\ntools:\n  enabled:\n    - a\n\n")
+        self.run_cutover()
+        self.apply()
+        self.assertEqual(self.config.read_text(),
+                         "model: x\ntools:\n  enabled:\n    - a\n"
+                         f"skills:\n  external_dirs:\n    - {self.farm}\n\n")
+        self.assertTrue(json.loads(self.baseline.read_text())["applied"]["created_skills_block"])
+
+    def test_created_skills_block_rolls_back_byte_for_byte(self):
+        self.config.write_text("model: x\ntools:\n  enabled:\n    - a\n\n")
+        before = self.config.read_bytes()
+        self.run_cutover()
+        recorded = json.loads(self.baseline.read_text())["resolution"]
+        self.apply()
+        self.assertTrue(self.run_cutover("rollback")["changed"])
+        self.assertEqual(before, self.config.read_bytes())
+        data = json.loads(self.baseline.read_text())
+        self.assertNotIn("applied", data)
+        self.assertEqual(data["resolution"], recorded)
+
+    def test_reapplying_a_created_block_keeps_it_rollback_exact(self):
+        self.config.write_text("model: x\n")
+        before = self.config.read_bytes()
+        self.run_cutover()
+        self.apply()
+        self.assertFalse(self.apply()["changed"])
+        self.assertTrue(json.loads(self.baseline.read_text())["applied"]["created_skills_block"])
+        self.run_cutover("rollback")
+        self.assertEqual(before, self.config.read_bytes())
+
+    def test_existing_skills_block_is_not_flagged_as_created(self):
+        self.run_cutover()
+        before = self.config.read_bytes()
+        self.apply()
+        self.assertFalse(json.loads(self.baseline.read_text())["applied"]["created_skills_block"])
+        self.run_cutover("rollback")
+        self.assertEqual(before, self.config.read_bytes())
+
+    def test_rollback_of_a_modified_created_block_fails_closed(self):
+        self.config.write_text("model: x\n")
+        self.run_cutover()
+        self.apply()
+        edited = self.config.read_text().replace("skills:\n", "skills:\n  disabled:\n    - x\n")
+        self.config.write_text(edited)
+        with self.assertRaisesRegex(co.CutoverError, "modified"):
+            self.run_cutover("rollback")
+        self.assertEqual(self.config.read_text(), edited)
+
     def test_gate_fails_closed_on_lost_resolution(self):
         self.run_cutover()
         shutil.rmtree(self.native / "writing")

@@ -7,7 +7,9 @@ and verifies the Consumer's farm (reusing ``scripts/exposure_farm.py``), makes o
 to the Consumer's loader config, and can undo exactly that edit.
 
 The loader config is Hermes's ``config.yaml``: the farm path is added to
-``skills.external_dirs`` byte-preservingly, and rollback removes exactly that entry.  The gate
+``skills.external_dirs`` byte-preservingly — creating the top-level ``skills:`` block first
+when the config has none — and rollback removes exactly that edit, restoring the config
+byte-for-byte (removing a block this tool created rather than leaving an empty one).  The gate
 implements wayfinder #11 section 6.  Without a policy it covers the policy-free conditions:
 
 1. the Exposure Manifest validates against the Store Manifest;
@@ -179,15 +181,24 @@ def _entry_span(lines: list[str], key_i: int, end: int) -> tuple[int, int]:
 
 
 def _set_external_dirs(text: str, dirs: list[str]) -> str:
-    """Rewrite skills.external_dirs as a block list, replacing any inline form."""
+    """Rewrite skills.external_dirs as a block list, replacing any inline form.
+
+    A config with no top-level ``skills:`` key gets the block created after its last top-level
+    key, every other byte untouched: ``remove_created_skills_block`` relies on that to restore
+    the config exactly.
+    """
     lines = text.splitlines(keepends=True)
-    block = _top_block(lines, "skills")
-    if block is None:
-        raise CutoverError("config has no top-level `skills:` key")
-    start, end = block
-    key_i = _child_key(lines, start, end, "external_dirs")
     replacement = (["  external_dirs: []\n"] if not dirs
                    else ["  external_dirs:\n", *(f"    - {d}\n" for d in dirs)])
+    block = _top_block(lines, "skills")
+    if block is None:
+        at = _create_block_index(lines)
+        if at and not lines[at - 1].endswith("\n"):
+            raise CutoverError("cannot create the `skills:` block: no line break to insert after")
+        lines[at:at] = ["skills:\n", *replacement]
+        return "".join(lines)
+    start, end = block
+    key_i = _child_key(lines, start, end, "external_dirs")
     if key_i is None:
         lines[start + 1:start + 1] = replacement
     else:
@@ -208,6 +219,47 @@ def remove_external_dir(text: str, path: str) -> tuple[str, bool]:
     if path not in dirs:
         return text, False
     return _set_external_dirs(text, [d for d in dirs if d != path]), True
+
+
+def _has_skills_block(text: str) -> bool:
+    return _top_block(text.splitlines(keepends=True), "skills") is not None
+
+
+def _create_block_index(lines: list[str]) -> int:
+    """Index just past the last top-level block, before any trailing blank lines."""
+    last = next((i for i, line in enumerate(lines) if line.strip() and not line[0].isspace()),
+                None)
+    if last is None:
+        return 0
+    index = len(lines)
+    while index > last + 1 and not lines[index - 1].strip():
+        index -= 1
+    return index
+
+
+def remove_created_skills_block(text: str, path: str) -> tuple[str, bool]:
+    """Undo a ``skills:`` block this tool created, restoring the config exactly.
+
+    Fails closed unless the block holds nothing but the Cutover's own ``external_dirs`` entry,
+    so rollback never discards another writer's keys.
+    """
+    lines = text.splitlines(keepends=True)
+    block = _top_block(lines, "skills")
+    if block is None:
+        return text, False
+    start, end = block
+    key_i = _child_key(lines, start, end, "external_dirs")
+    if key_i is None:
+        raise CutoverError("rollback: the created `skills:` block has no external_dirs")
+    first, last = _entry_span(lines, key_i, end)
+    entries = [] if first is None else [lines[i] for i in range(first, last + 1)]
+    if entries != [f"    - {path}\n"]:
+        raise CutoverError("rollback: the created `skills:` block was modified")
+    if [i for i in range(start + 1, end)
+            if lines[i].strip() and not (first is not None and first <= i <= last)] != [key_i]:
+        raise CutoverError("rollback: the created `skills:` block was modified")
+    del lines[start:last + 1]
+    return "".join(lines), True
 
 
 def _validate_external(text: str, path: str, present: bool) -> None:
@@ -290,12 +342,17 @@ def _apply(data: dict, baseline: Path, config: Path, store, manifest, farm,
     if problems:
         raise CutoverError("; ".join(problems))
     text = config.read_text()
+    created = not _has_skills_block(text)
     updated, changed = add_external_dir(text, str(farm))
     if changed:
         _validate_external(updated, str(farm), present=True)
         config.write_text(updated)
+    else:
+        # An idempotent re-apply must not forget that this Cutover created the block.
+        created = bool((data.get("applied") or {}).get("created_skills_block"))
     data["applied"] = {"farm": str(farm),
                        "config_sha256": hashlib.sha256(config.read_text().encode()).hexdigest(),
+                       "created_skills_block": created,
                        "resolution": after}
     _write_baseline(baseline, data)
     return {"ok": True, "consumer": data["consumer"], "config": str(config), "farm": str(farm),
@@ -324,7 +381,10 @@ def _rollback(data: dict, baseline: Path, config: Path) -> dict:
     if not applied:
         return {"ok": True, "consumer": data["consumer"], "config": str(config), "changed": False}
     text = config.read_text()
-    updated, changed = remove_external_dir(text, applied["farm"])
+    if applied.get("created_skills_block"):
+        updated, changed = remove_created_skills_block(text, applied["farm"])
+    else:
+        updated, changed = remove_external_dir(text, applied["farm"])
     if changed:
         _validate_external(updated, applied["farm"], present=False)
         config.write_text(updated)
