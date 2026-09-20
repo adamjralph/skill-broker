@@ -23,12 +23,18 @@ library, and produces replayable evidence for every routing decision.
 
 ## Status
 
-Project-definition stage. The authoritative description lives in
-[`PROJECT-OUTLINE.md`](./PROJECT-OUTLINE.md), which covers the domain model, system shape,
-module seams, delivery stages, evaluation criteria, and open decisions.
+Stages 1–4 are built and one Consumer is live. The Skill Broker's deterministic pipeline
+is implemented through ticket #50: the `prepare_turn` seam, Authorised Closure, Candidate
+Retrieval, Judgment validation and the Grant, Skill Pack assembly with Pack Delivery and
+duplicate suppression, and the live Jev Judgment Source with its recorded/No-Skill
+fallback. Stages 5–6 (offline routing evaluation and shadow-mode integration) are next.
 
-Next step: a bounded catalogue reconnaissance spike to inform the specification, followed
-by the `to-spec` workflow.
+Canonical documents:
+
+- [`PROJECT-OUTLINE.md`](./PROJECT-OUTLINE.md) — domain model, system shape, delivery stages
+- [`CONTEXT.md`](./CONTEXT.md) — the domain language, plus [`docs/adr/`](./docs/adr/)
+- issue #44 — the accepted specification for the broker half
+- [`docs/HANDOFF.md`](./docs/HANDOFF.md) — the live continuation state and next action
 
 ## Delivery stages
 
