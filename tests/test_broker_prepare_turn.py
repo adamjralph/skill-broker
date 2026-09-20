@@ -242,3 +242,41 @@ class JsonlEvidenceLogTest(unittest.TestCase):
             self.assertEqual(len(lines), 2)
             self.assertTrue(log.path.read_text().startswith(first_line))
             self.assertNotIn("the first request", log.path.read_text())
+
+
+class DeliveryPathContextTest(StoreFixtureTestCase):
+    """The Adapter-supplied delivery-path context and the correlation ids (ticket #51).
+
+    The broker treats the delivery path as an opaque turn fact: when the Adapter says the seam
+    cannot carry a Pack, the turn falls back to foundation-only — with the reason recorded and
+    the Store never read — and the Route Decision carries the turn's correlation ids.
+    """
+
+    def test_an_unsupported_delivery_path_narrows_without_reading_the_store(self) -> None:
+        evidence = RecordingEvidenceLog()
+        stale_manifest(self.store)
+        broker = Broker(store=self.store.root, evidence_log=evidence)
+
+        result = broker.prepare_turn("anything", self.store.profile, {
+            "session_id": "s-1", "task_id": "t-1", "turn_id": "turn-1",
+            "delivery_path": "multimodal", "delivery_supported": False})
+
+        self.assertIs(result.outcome, TurnOutcome.NO_SKILL)
+        self.assertEqual(result.grants, ())
+        decision = evidence.decisions[-1]
+        self.assertIn("delivery_path_unsupported", decision.reasons)
+        self.assertNotIn("store_manifest_invalid", decision.reasons)
+        self.assertEqual(decision.delivery_path, "multimodal")
+
+    def test_the_decision_records_the_turn_correlation_ids(self) -> None:
+        evidence = RecordingEvidenceLog()
+        broker = Broker(store=self.store.root, evidence_log=evidence)
+
+        broker.prepare_turn("a request", self.store.profile, {
+            "session_id": "s-1", "task_id": "t-1", "turn_id": "turn-1",
+            "delivery_path": "text", "delivery_supported": True})
+
+        record = evidence.records[-1]
+        self.assertEqual((record["session_id"], record["task_id"], record["turn_id"],
+                          record["delivery_path"]), ("s-1", "t-1", "turn-1", "text"))
+        self.assertEqual(record["route_decision_id"], evidence.decisions[-1].route_decision_id)

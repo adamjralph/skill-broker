@@ -1,7 +1,7 @@
 # Skill Broker handoff
 
-Updated: 2026-09-21 04:56 AEST (verified against the working tree, Git, GitHub, and the store)
-Next objective: implement **[#51 — The Hermes Adapter in Shadow Mode](https://github.com/adamjralph/skill-broker/issues/51)**, then the Stage 5 evaluation tickets.
+Updated: 2026-09-21 05:15 AEST (verified against the working tree, Git, GitHub, and the store)
+Next objective: implement **[#54 — Replay Corpus extraction and Reviewed Cases](https://github.com/adamjralph/skill-broker/issues/54)** (Stage 5), then the rest of the Stage 5 evaluation tickets.
 
 ## Start here
 
@@ -21,14 +21,14 @@ Authoritative spec and decisions:
 
 ## Verified current state
 
-**Git.** Branch `main`, HEAD `46c436c`. `origin/main` is level. Recent broker commits:
-`4718e6a` #46 seam, `14f69c0` #47 retrieval, `47e6e00` #48 Judgment/Grant, `e19deea` #49 Pack, `46c436c` #50 live Jev.
+**Git.** Branch `main`, HEAD `17a5067` plus the committed #51 Adapter work on top. `origin/main` is level at `17a5067`. Recent broker commits:
+`47e6e00` #48 Judgment/Grant, `e19deea` #49 Pack, `46c436c` #50 live Jev, `17a5067` handoff, then the #51 Adapter commit.
 
-**Tests.** `python3 -m unittest discover -s tests` from the repo root → **197 tests, all passing**. No packaging, no third-party deps beyond PyYAML for the store tooling.
+**Tests.** `python3 -m unittest discover -s tests` from the repo root → **224 tests, all passing**. No packaging, no third-party deps beyond PyYAML for the store tooling. The Adapter's Hermes-seam proof is separate (it needs the Hermes venv): `~/.hermes/hermes-agent/.venv/bin/python tests/hermes_adapter/run_shadow_proof.py` → `VERDICT: PASS`.
 
-**Broker modules** (`scripts/broker/`): `broker.py` (`Broker.prepare_turn`, the only external seam), `closure.py` (`authorised_closure`, `dependency_closure`), `retrieval.py` (BM25 candidate ranking), `metadata.py` (frontmatter retrieval metadata), `judgment.py` (`JudgmentCall`, sources, `validate`, `grant`, `FallbackJudgmentSource`), `jev.py` (`JevJudgmentSource`, `live_judgment_source`), `pack.py` (`HookConfig`, `Budget`, `build_pack`, Pack Delivery), `evidence.py` (`EvidenceLog`, `JsonlEvidenceLog`, `SessionLedger`), `types.py` (`RouteDecision`, `InterventionResult`, `PackDelivery`, …).
+**Broker modules** (`scripts/broker/`): `broker.py` (`Broker.prepare_turn`, the only external seam), `closure.py` (`authorised_closure`, `dependency_closure`), `retrieval.py` (BM25 candidate ranking), `metadata.py` (frontmatter retrieval metadata), `judgment.py` (`JudgmentCall`, sources, `validate`, `grant`, `FallbackJudgmentSource`, `FirstCandidateJudgmentSource`), `jev.py` (`JevJudgmentSource`, `live_judgment_source`), `pack.py` (`HookConfig`, `Budget`, `build_pack`, Pack Delivery), `evidence.py` (`EvidenceLog`, `JsonlEvidenceLog`, `SessionLedger`, `append_jsonl`), `types.py` (`RouteDecision`, `InterventionResult`, `PackDelivery`, …), `adapter.py` (the Hermes Adapter and its API-request evidence handle), `hermes_plugin/` (the loadable `skill-broker` plugin: `plugin.yaml` + `register(ctx)`).
 
-**Closed tickets.** #45–#50 (module home, seam, retrieval, Judgment/Grant, Pack, live Jev).
+**Closed tickets.** #45–#51 (module home, seam, retrieval, Judgment/Grant, Pack, live Jev, Hermes Adapter in Shadow Mode).
 
 **Skill Store.** `~/skill-store` (repo `adamjralph/skill-store`): **415 identities**, manifest verifies clean; two policies `life-agent.json` and `stillroom-signal-generator.json`. Verified this session:
 
@@ -39,22 +39,20 @@ python3 scripts/profile_policy.py validate --store ~/skill-store    # 2 policies
 
 **Cutover.** `life-agent` is live, zero-delta, rollback rehearsed; farm at `~/.local/share/skill-broker/farms/life-agent`.
 
-**Open frontier** (open, no open blocker, unassigned): **#51**, #53, #54, #59. Gated: #52←#51, #55←#54, #56←#51+#55, #57←#52+#53+#56, #58←#57. Spec order favours #51 next.
+**Open frontier** (open, no open blocker, unassigned): **#53**, #54, #59. Gated: #52←#51 (now satisfied), #55←#54, #56←#51+#55, #57←#52+#53+#56, #58←#57. Spec order favours #54 next (#52 depends on #51, which just landed).
 
-**Evidence from #50.** Live Jev call **not executed**: `typesafe_sdk` is not installed in the broker's Python and `TYPESAFE_API_KEY` is not exported. The SDK contract was verified against the installed SDK source and the live TypeSafe docs; the source is driven in tests through an injectable `client_factory`.
+**Evidence from #51.** The Adapter is built (`scripts/broker/adapter.py`) and loadable as the `skill-broker` Hermes plugin (`scripts/broker/hermes_plugin/`). The executed Hermes-seam proof runs five modes against a mock provider under one isolated `HERMES_HOME` and passes: byte-identical system prompt and tool schema control-vs-treatment and across turns, no Pack on the wire in Shadow Mode while a Pack is built, one evidence record per provider request locating its Route Decision, multimodal and `codex_app_server` refused with the reason recorded, an Adapter failure swallowed, and the effective hook cap read from config (which is unchanged). Injection remains **off** by default.
 
 ## In progress and pending
 
-Nothing is half-written. The next build is wholly unattempted:
+Nothing is half-written. #51 is complete and committed; the next build is unattempted:
 
-- **#51 The Hermes Adapter in Shadow Mode** — the only remaining internal seam (ADR-0001/B9). It composes a `Broker` and registers exactly two hooks (`pre_llm_call`, `pre_api_request`), injecting nothing while shadowing.
 - **#54 Replay Corpus extraction and Reviewed Cases** (Stage 5).
 - **#53 Decide where Brokered withholding is enforced** (spec B16 open decision; gates the pilot).
+- **#52 Hard gates, fail-closed, and the per-batch injection switch** — now unblocked by #51.
 - **#59 Fix the project-setup skills block requirement** (independent, small).
 
-Acceptance criteria for #51 are in the issue; the six that matter: byte-identical system prompt and tool schema in shadow (and across turns); no Pack content on the wire; one evidence record per request carrying the system-prompt hash, tool count and correlation ids, locatable from its Route Decision; unsupported paths emit no Intervention and record why; an Adapter failure leaves Hermes intact; the effective hook cap is **read** at runtime, not written to config.
-
-Wire-up available to #51: `HookConfig(hook_cap=…, reserve=…, spill=…)` (from #49), `live_judgment_source(recording=…)` (from #50), `JsonlEvidenceLog`, `SessionLedger`, and the prototype on the throwaway branch `prototype/hermes-intervention-seam` (the payload contract and the `run_proof.py` / `compare_proof.py` / `run_spill_proof.py` harnesses).
+The Adapter's settings are `store`, `profile`, `evidence_dir`, `judgment` (`live` | `recorded` | `first_candidate` | `no_skill`) and `inject` (default false). Route Decisions are appended to `<evidence_dir>/route_decisions.jsonl`; the API-request evidence handle to `<evidence_dir>/api_requests.jsonl`.
 
 ## Decisions and boundaries
 
@@ -77,11 +75,16 @@ Wire-up available to #51: `HookConfig(hook_cap=…, reserve=…, spill=…)` (fr
 
 ## Next actions
 
-1. Claim #51: `GH_CONFIG_DIR=~/.config/gh-personal gh issue edit 51 --add-assignee @me`, then read the issue, ADR-0001/B9, and the prototype branch's `plugin/skill-broker-prototype/__init__.py`.
-2. Build the Adapter as a Hermes plugin registering exactly `pre_llm_call` (returns `{"context": result.pack}` only when injection is enabled; `None` in shadow) and `pre_api_request` (system-prompt hash, tool count, correlation ids). No tools, no capabilities, no system-prompt section. Read the effective hook cap and spill setting from Hermes config into `HookConfig`.
-3. Test at the Hermes seam under an isolated `HERMES_HOME`, control-versus-treatment, byte-comparing the system prompt and tool schema across turns and asserting no Pack content crosses the wire in shadow.
-4. Run the full suite, then `code-review` (Standards + Spec), then commit on `main` and close #51 — the pattern used for #45–#50.
+1. Claim #54: `GH_CONFIG_DIR=~/.config/gh-personal gh issue edit 54 --add-assignee @me`, then read the issue, ADR-0020, and spec B14.
+2. Build the Replay Corpus extraction and Reviewed Cases at the per-source opt-in boundary; keep raw request text machine-local and uncommitted, SHA-bound Recordings in the repo.
+3. Before the pilot: #53 decides where Brokered withholding is enforced (B16) and #52 builds the hard gates and the injection switch on top of #51.
+4. Run the full suite plus `tests/hermes_adapter/run_shadow_proof.py`, then `code-review` (Standards + Spec), then commit on `main` and close the issue — the pattern used for #45–#51.
 
 ## Definition of done
 
-#51 is done when all six acceptance criteria are evidenced by tests that drive the real Hermes seam under an isolated `HERMES_HOME`, the full suite passes, the change is reviewed on both axes, and the commit and issue closure are on `origin/main`. Report any criterion that is only source-verified (not executed) explicitly, as #50 did for its live call.
+#51 is done: all six acceptance criteria are evidenced by the executed Hermes-seam proof
+(`tests/hermes_adapter/run_shadow_proof.py`, five modes, `VERDICT: PASS`), the pure Adapter seam is
+covered by `tests/test_broker_adapter.py`, the full suite passes, the change is reviewed on both
+axes, and the commit and issue closure are on `origin/main`. The `codex_app_server` route is
+exercised through Hermes's real hook dispatch rather than a live codex subprocess, and this is the
+one criterion whose end-to-end agent-loop path is not run (reported explicitly, as #50 did).

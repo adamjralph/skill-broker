@@ -7,6 +7,7 @@ persists. They carry hashes and identifiers, never request text and never Skill 
 
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass
 from enum import Enum
 
@@ -96,8 +97,9 @@ class RouteDecision:
     the ranked Candidate set, the Judgment and the Grants — all metadata or hashes. Ticket #49
     adds the Pack Delivery mode, the Pack's size and hash, and the effective spill budget, so a
     reviewer can tell whether a turn delivered under a bounded or an unbounded cap. Ticket #50
-    adds the Judgment Source that answered, its latency and its token usage. Timing and model
-    usage elsewhere follow in later stages.
+    adds the Judgment Source that answered, its latency and its token usage. Ticket #51 adds the
+    Hermes correlation ids (``task_id``/``turn_id``) and the classified delivery path, so the
+    Adapter's per-request evidence handle can locate the Route Decision it belongs to.
     """
 
     profile: str
@@ -106,6 +108,9 @@ class RouteDecision:
     reasons: tuple[str, ...]
     request_sha256: str
     request_chars: int
+    task_id: str | None = None
+    turn_id: str | None = None
+    delivery_path: str | None = None
     authorised_closure: tuple[ResolvedSkillVersion, ...] = ()
     candidate_limit: int | None = None
     candidates: tuple[Candidate, ...] = ()
@@ -119,10 +124,26 @@ class RouteDecision:
     pack_sha256: str | None = None
     budget: dict | None = None
 
+    @property
+    def route_decision_id(self) -> str:
+        """A stable locator for this decision, so a request's evidence handle can name it.
+
+        Deterministic over the routing identity — the profile, the turn id and the request hash —
+        so the same Recording replays to the same locator and no session, counter or clock leaks
+        into it. The Adapter's evidence record also carries ``session_id``/``turn_id``, so the join
+        holds durably even without this id.
+        """
+        material = "\x00".join((self.profile or "", self.turn_id or "", self.request_sha256))
+        return hashlib.sha256(material.encode("utf-8")).hexdigest()
+
     def to_record(self) -> dict:
         return {
+            "route_decision_id": self.route_decision_id,
             "profile": self.profile,
             "session_id": self.session_id,
+            "task_id": self.task_id,
+            "turn_id": self.turn_id,
+            "delivery_path": self.delivery_path,
             "outcome": self.outcome.value,
             "reasons": list(self.reasons),
             "request": {"sha256": self.request_sha256, "chars": self.request_chars},

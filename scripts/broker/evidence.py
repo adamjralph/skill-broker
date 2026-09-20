@@ -14,6 +14,15 @@ from typing import Iterable, Protocol, runtime_checkable
 from .types import RouteDecision
 
 
+def append_jsonl(path: Path | str, record: dict) -> None:
+    """Append one JSON record to a ``.jsonl`` file, creating parents; never rewrites a line."""
+    file = Path(path)
+    file.parent.mkdir(parents=True, exist_ok=True)
+    with file.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(record, sort_keys=True, ensure_ascii=False))
+        handle.write("\n")
+
+
 @runtime_checkable
 class EvidenceLog(Protocol):
     """Where a turn's Route Decision is durably appended."""
@@ -28,10 +37,7 @@ class JsonlEvidenceLog:
         self.path = Path(path)
 
     def append(self, decision: RouteDecision) -> None:
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        with self.path.open("a", encoding="utf-8") as handle:
-            handle.write(json.dumps(decision.to_record(), sort_keys=True, ensure_ascii=False))
-            handle.write("\n")
+        append_jsonl(self.path, decision.to_record())
 
 
 class SessionLedger:

@@ -11,12 +11,21 @@ The single external seam is ``Broker.prepare_turn(request, profile, session_cont
 See the accepted spec (issue #44) and ``PROJECT-OUTLINE.md``.
 """
 
+from .adapter import (
+    Adapter,
+    ApiRequestEvidence,
+    DeliveryPath,
+    JsonlRequestEvidenceLog,
+    RequestEvidenceLog,
+    classify_delivery_path,
+)
 from .broker import Broker
 from .evidence import EvidenceLog, JsonlEvidenceLog, SessionLedger
 from .jev import DEFAULT_TIMEOUT as JEV_DEFAULT_TIMEOUT
 from .jev import JevJudgmentSource, live_judgment_source
 from .judgment import (
     FallbackJudgmentSource,
+    FirstCandidateJudgmentSource,
     JudgmentCall,
     JudgmentError,
     JudgmentSource,
@@ -39,17 +48,22 @@ from .types import (
 )
 
 __all__ = [
+    "Adapter",
+    "ApiRequestEvidence",
     "Broker",
     "Budget",
     "CANDIDATE_LIMIT",
     "Candidate",
+    "DeliveryPath",
     "EvidenceLog",
     "FallbackJudgmentSource",
+    "FirstCandidateJudgmentSource",
     "HookConfig",
     "InterventionResult",
     "JEV_DEFAULT_TIMEOUT",
     "JevJudgmentSource",
     "JsonlEvidenceLog",
+    "JsonlRequestEvidenceLog",
     "Judgment",
     "JudgmentCall",
     "JudgmentError",
@@ -59,12 +73,14 @@ __all__ = [
     "RecordedJudgmentSource",
     "Recording",
     "RecordingMismatch",
+    "RequestEvidenceLog",
     "ResolvedSkillVersion",
     "RouteDecision",
     "SessionLedger",
     "SkillContent",
     "StubJudgmentSource",
     "TurnOutcome",
+    "classify_delivery_path",
     "live_judgment_source",
     "no_skill_claim",
 ]

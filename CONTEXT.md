@@ -219,6 +219,12 @@ Whether a Skill Pack's content is supplied within the Intervention itself or by 
 a location holding it in full. Independent of which Skills the Pack contains.
 _Avoid_: truncation, spill
 
+**Delivery Path**:
+The channel one turn's content can reach the model through the Hermes seam: ordinary text,
+which carries the per-turn user-message sidecar, versus multimodal content and the app-server
+route, which cannot and so receive no Intervention and fall back to native foundation exposure.
+_Avoid_: transport, provider route
+
 **Intervention**:
 The act of supplying a validated Skill Pack before the main agent begins work on the
 request.
@@ -243,8 +249,14 @@ _Avoid_: session grant, sticky grant
 
 **Route Decision**:
 The complete record of one routing outcome: request identity, profile, candidates,
-Judgment, policy result, grants, hashes, limits, reasons, timing, and model usage.
+Judgment, policy result, grants, hashes, limits, reasons, timing, and model usage. Carries the
+turn's correlation ids and a deterministic `route_decision_id` locator.
 _Avoid_: trace, selection event
+
+**Evidence Handle**:
+The record appended for one provider request carrying the system-prompt hash, the tool count
+and the correlation ids, so the Route Decision that request belongs to is locatable.
+_Avoid_: trace, log line
 
 **Evidence Log**:
 The durable, append-only store of Route Decisions, holding metadata and content hashes rather

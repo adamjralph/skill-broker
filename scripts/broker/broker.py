@@ -72,6 +72,7 @@ class Broker:
         conversation already supplied. Exactly one Route Decision is always appended.
         """
         reasons: list[str] = []
+        context = dict(session_context or {})
         closure: tuple[ResolvedSkillVersion, ...] = ()
         candidates: tuple[Candidate, ...] = ()
         judgment: Judgment | None = None
@@ -83,54 +84,64 @@ class Broker:
         pack: Pack | None = None
         budget = resolve_budget(self._hook, {})[0]
 
-        problems = sm.verify(self._store)
-        if problems:
-            outcome = TurnOutcome.FAILURE
-            reasons.append("store_manifest_invalid")
-            reasons.extend(problems)
+        if context.get("delivery_supported", True) is False:
+            # A delivery path that cannot carry the seam (the Adapter classifies it) has nothing
+            # to deliver, so the turn falls back to native foundation exposure. The Route
+            # Decision still records the turn and why, and the Store is never read.
+            reasons.append("delivery_path_unsupported")
         else:
-            identities = {row["id"]: row for row in sm.build(self._store)["identities"]}
-            policy, policy_problems = self._policy(profile, identities)
-            budget, budget_problems = resolve_budget(self._hook, policy)
-            if policy is None:
-                reasons.append("policy_missing")
-            elif policy_problems:
-                reasons.append("policy_invalid")
-                reasons.extend(policy_problems)
-            elif budget_problems:
-                reasons.append("policy_budget_invalid")
-                reasons.extend(budget_problems)
+            problems = sm.verify(self._store)
+            if problems:
+                outcome = TurnOutcome.FAILURE
+                reasons.append("store_manifest_invalid")
+                reasons.extend(problems)
             else:
-                closure, closure_problems = authorised_closure(policy, identities)
-                reasons.extend(closure_problems)
-                candidates = rank(request, [candidate_profile(self._store, identities[entry.id])
-                                            for entry in closure])
-                if self._judgment_source is not None:
-                    started = time.perf_counter()
-                    outcome, judgment, grants, problems, call = self._judge(
-                        request, candidates, closure)
-                    judgment_latency_ms = round((time.perf_counter() - started) * 1000, 3)
-                    reasons.extend(problems)
-                    if call is not None:
-                        judgment_source = call.source
-                        judgment_usage = {"input_tokens": call.input_tokens,
-                                          "output_tokens": call.output_tokens}
-                    if outcome is TurnOutcome.GRANTED and grants:
-                        pack, pack_problems = build_pack(
-                            store=self._store, profile=profile, primary=grants[0],
-                            identities=identities, denied=policy.get("denied", ()), budget=budget)
-                        if pack_problems:
-                            outcome = TurnOutcome.FAILURE
-                            reasons.extend(pack_problems)
-                            pack = None
-                        else:
-                            pack, suppressed = self._dedupe(pack, session_context)
-                            if suppressed:
-                                reasons.append("duplicate_suppressed")
+                identities = {row["id"]: row for row in sm.build(self._store)["identities"]}
+                policy, policy_problems = self._policy(profile, identities)
+                budget, budget_problems = resolve_budget(self._hook, policy)
+                if policy is None:
+                    reasons.append("policy_missing")
+                elif policy_problems:
+                    reasons.append("policy_invalid")
+                    reasons.extend(policy_problems)
+                elif budget_problems:
+                    reasons.append("policy_budget_invalid")
+                    reasons.extend(budget_problems)
+                else:
+                    closure, closure_problems = authorised_closure(policy, identities)
+                    reasons.extend(closure_problems)
+                    candidates = rank(request, [candidate_profile(self._store, identities[entry.id])
+                                                for entry in closure])
+                    if self._judgment_source is not None:
+                        started = time.perf_counter()
+                        outcome, judgment, grants, problems, call = self._judge(
+                            request, candidates, closure)
+                        judgment_latency_ms = round((time.perf_counter() - started) * 1000, 3)
+                        reasons.extend(problems)
+                        if call is not None:
+                            judgment_source = call.source
+                            judgment_usage = {"input_tokens": call.input_tokens,
+                                              "output_tokens": call.output_tokens}
+                        if outcome is TurnOutcome.GRANTED and grants:
+                            pack, pack_problems = build_pack(
+                                store=self._store, profile=profile, primary=grants[0],
+                                identities=identities, denied=policy.get("denied", ()),
+                                budget=budget)
+                            if pack_problems:
+                                outcome = TurnOutcome.FAILURE
+                                reasons.extend(pack_problems)
+                                pack = None
+                            else:
+                                pack, suppressed = self._dedupe(pack, context.get("session_id"))
+                                if suppressed:
+                                    reasons.append("duplicate_suppressed")
 
         decision = RouteDecision(
             profile=profile,
-            session_id=(session_context or {}).get("session_id"),
+            session_id=context.get("session_id"),
+            task_id=context.get("task_id"),
+            turn_id=context.get("turn_id"),
+            delivery_path=context.get("delivery_path"),
             outcome=outcome,
             reasons=tuple(reasons),
             request_sha256=hashlib.sha256(request.encode("utf-8")).hexdigest(),
@@ -155,8 +166,7 @@ class Broker:
                                   delivery=pack.delivery if pack is not None else None,
                                   decision=decision)
 
-    def _dedupe(self, pack: Pack, session_context: Mapping[str, Any] | None) -> tuple[
-            Pack | None, bool]:
+    def _dedupe(self, pack: Pack, session_id: str | None) -> tuple[Pack | None, bool]:
         """Suppress a Pack whose every content hash is already supplied in this conversation.
 
         The Session Ledger is evidence, never a lease: authority was already re-derived above,
@@ -165,7 +175,6 @@ class Broker:
         supplied content is delivered complete rather than partially trimmed. ``(None, True)``
         records the suppression; ``(pack, False)`` remembers the supplied hashes.
         """
-        session_id = (session_context or {}).get("session_id")
         if not session_id or self._session_ledger is None:
             return pack, False
         supplied = self._session_ledger.supplied(session_id)

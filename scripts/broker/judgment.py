@@ -97,6 +97,24 @@ class StubJudgmentSource:
         return JudgmentCall(claim=dict(self._claim), source=self.name)
 
 
+class FirstCandidateJudgmentSource:
+    """The deterministic stub that grants the top-ranked Candidate, or No-Skill with none.
+
+    Useful where a real model must not enter the loop — the Adapter's Shadow Mode proof needs a
+    Pack to exist so suppression is observable — and a legitimate member of the Source seam
+    (ADR-0001): it judges from the Candidates alone and never widens the Authorised Closure.
+    """
+
+    name = "first_candidate"
+
+    def judge(self, request: str, candidates: Sequence[Candidate]) -> JudgmentCall:
+        del request
+        if not candidates:
+            return JudgmentCall(claim=no_skill_claim(candidates), source=self.name)
+        primary = candidates[0].id
+        return JudgmentCall(claim=_first_candidate_claim(candidates, primary), source=self.name)
+
+
 class RecordedJudgmentSource:
     """Replays one Recording, refusing a request that is not that Recording's Case."""
 
@@ -136,6 +154,18 @@ class FallbackJudgmentSource:
             return replace(call, notes=tuple(notes) + call.notes)
         return JudgmentCall(claim=no_skill_claim(candidates), source=NO_SKILL,
                             notes=tuple(notes))
+
+
+def _first_candidate_claim(candidates: Sequence[Candidate], primary: str) -> dict:
+    """A well-formed Choice granting ``primary``: confidence 0.9, the remainder spread evenly."""
+    others = [candidate.id for candidate in candidates if candidate.id != primary]
+    share = round(0.1 / (len(others) + 1), 6)
+    distribution = {ident: share for ident in others}
+    distribution[NO_SKILL] = share
+    distribution[primary] = round(1.0 - share * (len(others) + 1), 6)
+    return {"primary": primary, "confidence": distribution[primary],
+            "distribution": distribution,
+            "candidates": [candidate.id for candidate in candidates]}
 
 
 def no_skill_claim(candidates: Sequence[Candidate]) -> dict:

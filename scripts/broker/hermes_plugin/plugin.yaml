@@ -1,0 +1,14 @@
+name: skill-broker
+version: 0.1.0
+description: "The Skill Broker: a deterministic skill-intervention layer at the cache-safe Hermes pre_llm_call seam"
+kind: standalone
+provides_hooks:
+  - pre_llm_call
+  - pre_api_request
+config_schema:
+  store: {type: str, default: "~/skill-store", description: "Path to the Skill Store"}
+  profile: {type: str, default: "", description: "Profile Policy to route for; defaults to the active Hermes profile"}
+  evidence_dir: {type: str, default: "", description: "Where Route Decisions and request evidence are appended"}
+  judgment: {type: str, default: "live", description: "Judgment Source: live | recorded | first_candidate | no_skill"}
+  recording: {type: str, default: "", description: "Recording JSON path when judgment is 'recorded'"}
+  inject: {type: bool, default: false, description: "Emit the Pack for the turn. Off is Shadow Mode."}
