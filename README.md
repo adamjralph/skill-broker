@@ -24,10 +24,11 @@ library, and produces replayable evidence for every routing decision.
 ## Status
 
 Stages 1–4 are built and one Consumer is live. The Skill Broker's deterministic pipeline
-is implemented through ticket #50: the `prepare_turn` seam, Authorised Closure, Candidate
+is implemented through ticket #54: the `prepare_turn` seam, Authorised Closure, Candidate
 Retrieval, Judgment validation and the Grant, Skill Pack assembly with Pack Delivery and
-duplicate suppression, and the live Jev Judgment Source with its recorded/No-Skill
-fallback. Stages 5–6 (offline routing evaluation and shadow-mode integration) are next.
+duplicate suppression, the live Jev Judgment Source with its recorded/No-Skill fallback, the
+Hermes Adapter at the cache-safe seam in Shadow Mode, and the machine-local Replay Corpus with
+Reviewed Cases and SHA-bound Recordings. Stage 5's offline routing evaluation is next.
 
 Canonical documents:
 
