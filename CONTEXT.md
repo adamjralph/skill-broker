@@ -251,6 +251,29 @@ The durable, append-only store of Route Decisions, holding metadata and content 
 than request text.
 _Avoid_: ledger, telemetry
 
+### Evaluation and rollout
+
+**Hard Gate**:
+A routing-quality condition that must hold regardless of evaluation data. A breach fails the
+profile closed; never negotiated by a corpus or baseline.
+_Avoid_: must-have, blocker
+
+**Soft Threshold**:
+A routing-quality threshold derived from the measured Stage 5 baseline over the reviewed replay
+corpus and pre-registered before shadow review. Moves only by re-derivation against a larger
+corpus, never to admit a batch.
+_Avoid_: target, cutoff
+
+**Shadow Mode**:
+The integration stage in which the broker runs at its Hermes seam but injects no content,
+recording what it would have selected.
+_Avoid_: dry run, test mode
+
+**Shadow Report**:
+The reviewed record of what the broker would have selected in Shadow Mode, compared against
+actual skill use and human review. Its review authorises enabling injection for a batch.
+_Avoid_: metrics dump, eval report
+
 ### The system
 
 **Broker**:
