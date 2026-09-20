@@ -16,6 +16,7 @@ from store_fixture import StoreFixture  # noqa: E402
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 import store_manifest as sm  # noqa: E402
+from broker.judgment import JudgmentCall  # noqa: E402
 
 
 class RecordingEvidenceLog:
@@ -35,11 +36,13 @@ class RecordingEvidenceLog:
 class ScriptedJudgmentSource:
     """A deterministic ``JudgmentSource`` returning one scripted claim per turn, in order."""
 
+    name = "scripted"
+
     def __init__(self, *claims) -> None:
         self.claims = list(claims)
 
     def judge(self, request, candidates):
-        return self.claims.pop(0)
+        return JudgmentCall(claim=self.claims.pop(0), source=self.name)
 
 
 class TamperingJudgmentSource:
@@ -49,6 +52,8 @@ class TamperingJudgmentSource:
     and Pack assembly, so it is where a test can stage delivery-time drift.
     """
 
+    name = "tampering"
+
     def __init__(self, claim, skill_md: Path, text: str = "\nTampered after verification.\n") -> None:
         self.claim = claim
         self.skill_md = Path(skill_md)
@@ -56,7 +61,7 @@ class TamperingJudgmentSource:
 
     def judge(self, request, candidates):
         self.skill_md.write_text(self.skill_md.read_text() + self.text)
-        return self.claim
+        return JudgmentCall(claim=self.claim, source=self.name)
 
 
 def judgment_claim(candidate_ids, *, primary, confidence=0.9, no_skill=0.1):

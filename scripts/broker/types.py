@@ -95,8 +95,9 @@ class RouteDecision:
     Tickets #46-#48 record the request identity, the profile, the resolved Authorised Closure,
     the ranked Candidate set, the Judgment and the Grants — all metadata or hashes. Ticket #49
     adds the Pack Delivery mode, the Pack's size and hash, and the effective spill budget, so a
-    reviewer can tell whether a turn delivered under a bounded or an unbounded cap. Timing and
-    model usage follow in later stages.
+    reviewer can tell whether a turn delivered under a bounded or an unbounded cap. Ticket #50
+    adds the Judgment Source that answered, its latency and its token usage. Timing and model
+    usage elsewhere follow in later stages.
     """
 
     profile: str
@@ -109,6 +110,9 @@ class RouteDecision:
     candidate_limit: int | None = None
     candidates: tuple[Candidate, ...] = ()
     judgment: Judgment | None = None
+    judgment_source: str | None = None
+    judgment_latency_ms: float | None = None
+    judgment_usage: dict | None = None
     grants: tuple[ResolvedSkillVersion, ...] = ()
     delivery: PackDelivery | None = None
     pack_chars: int | None = None
@@ -126,6 +130,9 @@ class RouteDecision:
             "candidate_limit": self.candidate_limit,
             "candidates": [candidate.to_record() for candidate in self.candidates],
             "judgment": self.judgment.to_record() if self.judgment is not None else None,
+            "judgment_source": self.judgment_source,
+            "judgment_latency_ms": self.judgment_latency_ms,
+            "judgment_usage": self.judgment_usage,
             "grants": [entry.to_record() for entry in self.grants],
             "delivery": self.delivery.value if self.delivery is not None else None,
             "pack_chars": self.pack_chars,

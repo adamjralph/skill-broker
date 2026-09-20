@@ -2,17 +2,21 @@
 
 A Judgment is exactly one batched Choice over the ranked Candidates plus a reserved ``no_skill``
 option, validated into a nullable Primary Skill, a confidence, the full probability distribution
-and the echoed Candidate set (ADR-0013). The Source is interchangeable — live Jev (ticket #50),
-a recorded Recording, or the deterministic stub here — because a model returns text, not
-authority: only ``grant`` turns a validated Judgment into a Grant, and it can only ever narrow
-what the Profile Policy already allows (ADR-0004).
+and the echoed Candidate set (ADR-0013). The Source is interchangeable — live Jev
+(:mod:`broker.jev`, ticket #50), a recorded Recording, or the deterministic stub here — because
+a model returns text, not authority: only ``grant`` turns a validated Judgment into a Grant, and
+it can only ever narrow what the Profile Policy already allows (ADR-0004).
+
+Every Source answers a :class:`JudgmentCall`: the claim plus which implementation answered and
+what it cost. A :class:`FallbackJudgmentSource` chains them live-then-recorded-then-No-Skill, so
+an expired or unavailable model narrows a turn instead of blocking it.
 """
 
 from __future__ import annotations
 
 import hashlib
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Protocol, runtime_checkable
 
 from .types import Candidate, Judgment, ResolvedSkillVersion
@@ -29,11 +33,31 @@ class RecordingMismatch(JudgmentError):
     """A Recording was asked to judge a request that is not its Case."""
 
 
+@dataclass(frozen=True)
+class JudgmentCall:
+    """One Source's answer plus what it cost (ticket #50).
+
+    ``claim`` is the raw Choice the validator must accept before anything grants; ``source``
+    names which implementation answered (``jev``, ``recorded``, ``stub``, ``no_skill``);
+    ``notes`` carries a fallback chain's failed attempts. The broker records all of it in the
+    Route Decision, so a reviewer can see which source answered and what it cost.
+    """
+
+    claim: Mapping
+    source: str
+    input_tokens: int | None = None
+    output_tokens: int | None = None
+    notes: tuple[str, ...] = ()
+
+
 @runtime_checkable
 class JudgmentSource(Protocol):
-    """Anything that answers one Choice for a request over these Candidates."""
+    """Anything that answers one Choice for a request over these Candidates, and says at what
+    cost (ticket #50). ``name`` labels the implementation in the Route Decision."""
 
-    def judge(self, request: str, candidates: Sequence[Candidate]) -> Mapping: ...
+    name: str
+
+    def judge(self, request: str, candidates: Sequence[Candidate]) -> JudgmentCall: ...
 
 
 @dataclass(frozen=True)
@@ -64,23 +88,69 @@ class Recording:
 class StubJudgmentSource:
     """The deterministic stub: always answers the claim it was constructed with."""
 
+    name = "stub"
+
     def __init__(self, claim: Mapping) -> None:
         self._claim = dict(claim)
 
-    def judge(self, request: str, candidates: Sequence[Candidate]) -> Mapping:
-        return dict(self._claim)
+    def judge(self, request: str, candidates: Sequence[Candidate]) -> JudgmentCall:
+        return JudgmentCall(claim=dict(self._claim), source=self.name)
 
 
 class RecordedJudgmentSource:
     """Replays one Recording, refusing a request that is not that Recording's Case."""
 
+    name = "recorded"
+
     def __init__(self, recording: Recording) -> None:
         self._recording = recording
 
-    def judge(self, request: str, candidates: Sequence[Candidate]) -> Mapping:
+    def judge(self, request: str, candidates: Sequence[Candidate]) -> JudgmentCall:
         if not self._recording.matches(request):
             raise RecordingMismatch("the request is not this Recording's Case")
-        return dict(self._recording.claim)
+        return JudgmentCall(claim=dict(self._recording.claim), source=self.name)
+
+
+class FallbackJudgmentSource:
+    """An ordered Judgment chain: the first Source that answers wins, No-Skill is the floor.
+
+    A Source that raises — an expired live call, an unavailable or misconfigured model, an
+    undecodable response — yields to the next; when every Source has failed the chain answers
+    an explicit No-Skill Outcome. Nothing here grants authority, so a failure can only narrow
+    the turn (ADR-0004, ticket #50).
+    """
+
+    def __init__(self, *sources: JudgmentSource) -> None:
+        self._sources = tuple(sources)
+
+    def judge(self, request: str, candidates: Sequence[Candidate]) -> JudgmentCall:
+        notes: list[str] = []
+        for source in self._sources:
+            try:
+                call = source.judge(request, candidates)
+            except Exception as exc:  # noqa: BLE001 — the seam is outside our control
+                # The exception's type only, never its text: reasons are durable evidence and a
+                # provider error can echo the request (ADR-0015).
+                notes.append(f"{_source_name(source)}: {type(exc).__name__}")
+                continue
+            return replace(call, notes=tuple(notes) + call.notes)
+        return JudgmentCall(claim=no_skill_claim(candidates), source=NO_SKILL,
+                            notes=tuple(notes))
+
+
+def no_skill_claim(candidates: Sequence[Candidate]) -> dict:
+    """A well-formed No-Skill Choice over these Candidates — the fallback chain's floor."""
+    ids = [candidate.id for candidate in candidates]
+    return {
+        "primary": None,
+        "confidence": 1.0,
+        "distribution": {**{ident: 0.0 for ident in ids}, NO_SKILL: 1.0},
+        "candidates": ids,
+    }
+
+
+def _source_name(source: object) -> str:
+    return str(getattr(source, "name", type(source).__name__))
 
 
 def validate(claim: object, candidates: Sequence[Candidate],

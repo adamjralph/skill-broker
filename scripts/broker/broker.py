@@ -14,6 +14,7 @@ recorded Route Decision.
 from __future__ import annotations
 
 import hashlib
+import time
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -22,7 +23,7 @@ import store_manifest as sm
 
 from .closure import authorised_closure
 from .evidence import SessionLedger
-from .judgment import grant, validate
+from .judgment import JudgmentCall, grant, validate
 from .metadata import candidate_profile
 from .pack import HookConfig, Pack, build_pack, resolve_budget
 from .retrieval import CANDIDATE_LIMIT, rank
@@ -74,6 +75,9 @@ class Broker:
         closure: tuple[ResolvedSkillVersion, ...] = ()
         candidates: tuple[Candidate, ...] = ()
         judgment: Judgment | None = None
+        judgment_source: str | None = None
+        judgment_latency_ms: float | None = None
+        judgment_usage: dict | None = None
         grants: tuple[ResolvedSkillVersion, ...] = ()
         outcome = TurnOutcome.NO_SKILL
         pack: Pack | None = None
@@ -102,8 +106,15 @@ class Broker:
                 candidates = rank(request, [candidate_profile(self._store, identities[entry.id])
                                             for entry in closure])
                 if self._judgment_source is not None:
-                    outcome, judgment, grants, problems = self._judge(request, candidates, closure)
+                    started = time.perf_counter()
+                    outcome, judgment, grants, problems, call = self._judge(
+                        request, candidates, closure)
+                    judgment_latency_ms = round((time.perf_counter() - started) * 1000, 3)
                     reasons.extend(problems)
+                    if call is not None:
+                        judgment_source = call.source
+                        judgment_usage = {"input_tokens": call.input_tokens,
+                                          "output_tokens": call.output_tokens}
                     if outcome is TurnOutcome.GRANTED and grants:
                         pack, pack_problems = build_pack(
                             store=self._store, profile=profile, primary=grants[0],
@@ -128,6 +139,9 @@ class Broker:
             candidate_limit=CANDIDATE_LIMIT,
             candidates=candidates,
             judgment=judgment,
+            judgment_source=judgment_source,
+            judgment_latency_ms=judgment_latency_ms,
+            judgment_usage=judgment_usage,
             grants=grants,
             delivery=pack.delivery if pack is not None else None,
             pack_chars=len(pack.text) if pack is not None else None,
@@ -163,26 +177,32 @@ class Broker:
     def _judge(self, request: str, candidates: tuple[Candidate, ...],
                closure: tuple[ResolvedSkillVersion, ...]) -> tuple[
                    TurnOutcome, Judgment | None, tuple[ResolvedSkillVersion, ...],
-                   tuple[str, ...]]:
+                   tuple[str, ...], JudgmentCall | None]:
         """Ask the Judgment Source and validate its answer. Invalid output never grants.
 
         The Source is an external seam, so anything it raises is a recorded failure rather than
-        a crashed turn; a model returns text, not authority (ADR-0004).
+        a crashed turn; a model returns text, not authority (ADR-0004). The Source's ``notes``
+        — a fallback chain's failed attempts — are recorded as reasons, and its ``source`` and
+        token usage travel back to the Route Decision.
         """
         try:
-            claim = self._judgment_source.judge(request, candidates)
+            call = self._judgment_source.judge(request, candidates)
         except Exception as exc:  # noqa: BLE001 — the seam is outside our control
-            return TurnOutcome.FAILURE, None, (), ("judgment_source_error", f"{exc}",)
-        judgment, problems = validate(claim, candidates, closure)
+            # The type only, never the message: reasons are durable evidence and a provider
+            # error can echo the request (ADR-0015).
+            return (TurnOutcome.FAILURE, None, (),
+                    ("judgment_source_error", type(exc).__name__), None)
+        judgment, problems = validate(call.claim, candidates, closure)
         if judgment is None:
-            return TurnOutcome.FAILURE, None, (), ("judgment_invalid", *problems)
+            return TurnOutcome.FAILURE, None, (), ("judgment_invalid", *problems, *call.notes), call
         if judgment.no_skill:
-            return TurnOutcome.NO_SKILL, judgment, (), ()
+            return TurnOutcome.NO_SKILL, judgment, (), call.notes, call
         grants = grant(judgment, closure)
         if not grants:
             return (TurnOutcome.FAILURE, judgment, (),
-                    ("judgment_invalid", f"primary {judgment.primary!r} is not authorised"))
-        return TurnOutcome.GRANTED, judgment, grants, ()
+                    ("judgment_invalid", f"primary {judgment.primary!r} is not authorised",
+                     *call.notes), call)
+        return TurnOutcome.GRANTED, judgment, grants, call.notes, call
 
     def _policy(self, profile: str, identities: dict[str, dict]) -> tuple[dict | None, tuple[str, ...]]:
         """The profile's policy, or ``(None, ())`` when there is none, plus validation problems."""

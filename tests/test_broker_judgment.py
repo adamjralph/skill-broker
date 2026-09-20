@@ -173,8 +173,11 @@ class RecordingReplayTest(StoreFixtureTestCase):
 
         first, second = self.decisions_for(RecordedJudgmentSource(recording))
 
-        self.assertEqual({k: v for k, v in first.items() if k != "session_id"},
-                         {k: v for k, v in second.items() if k != "session_id"})
+        # Timing is evidence, not the decision: the same Recording must reproduce the same
+        # routing outcome, Candidates, Judgment and Grants.
+        volatile = {"session_id", "judgment_latency_ms"}
+        self.assertEqual({k: v for k, v in first.items() if k not in volatile},
+                         {k: v for k, v in second.items() if k not in volatile})
         self.assertIsNotNone(first["judgment"])
 
     def test_a_recording_bound_to_another_request_is_rejected(self) -> None:

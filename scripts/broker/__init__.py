@@ -13,13 +13,18 @@ See the accepted spec (issue #44) and ``PROJECT-OUTLINE.md``.
 
 from .broker import Broker
 from .evidence import EvidenceLog, JsonlEvidenceLog, SessionLedger
+from .jev import DEFAULT_TIMEOUT as JEV_DEFAULT_TIMEOUT
+from .jev import JevJudgmentSource, live_judgment_source
 from .judgment import (
+    FallbackJudgmentSource,
+    JudgmentCall,
     JudgmentError,
     JudgmentSource,
     RecordedJudgmentSource,
     Recording,
     RecordingMismatch,
     StubJudgmentSource,
+    no_skill_claim,
 )
 from .pack import Budget, HookConfig, Pack, SkillContent
 from .retrieval import CANDIDATE_LIMIT
@@ -39,10 +44,14 @@ __all__ = [
     "CANDIDATE_LIMIT",
     "Candidate",
     "EvidenceLog",
+    "FallbackJudgmentSource",
     "HookConfig",
     "InterventionResult",
+    "JEV_DEFAULT_TIMEOUT",
+    "JevJudgmentSource",
     "JsonlEvidenceLog",
     "Judgment",
+    "JudgmentCall",
     "JudgmentError",
     "JudgmentSource",
     "Pack",
@@ -56,4 +65,6 @@ __all__ = [
     "SkillContent",
     "StubJudgmentSource",
     "TurnOutcome",
+    "live_judgment_source",
+    "no_skill_claim",
 ]
