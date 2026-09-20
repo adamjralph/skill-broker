@@ -130,6 +130,11 @@ The record of which Exposure names one Consumer resolves to which IDs. Authored 
 non-Hermes Consumers; derived from the Profile Policy for Hermes profiles.
 _Avoid_: farm manifest, mapping file
 
+**Exposure Alias**:
+The Exposure name a Profile Policy gives a Foundation Skill when it differs from the Skill's
+Name. A Name, never an ID.
+_Avoid_: rename, override
+
 **Profile Policy**:
 The deterministic declaration of what one profile may receive: its Foundation Set,
 Brokered Allowlist, Preferred Skills, Denied Skills, budgets, thresholds, dependency
@@ -145,6 +150,15 @@ _Avoid_: core skill, builtin skill, always-on skill
 A Skill withheld from a given profile's automatic index but eligible to be supplied by the
 broker.
 _Avoid_: specialised skill, optional skill
+
+**Foundation Set**:
+The Foundation Skills a Profile Policy exposes to one profile, each a store ID or a
+project-wired entry.
+_Avoid_: core set, always-on list
+
+**Brokered Allowlist**:
+The Brokered Skills a Profile Policy permits the broker to supply to one profile, by ID.
+_Avoid_: hidden list, withheld set
 
 **Preferred Skill**:
 A Skill whose relevance threshold is relaxed for a profile. It receives no authority and
