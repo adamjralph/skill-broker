@@ -6,12 +6,16 @@ intervene without mutating the system prompt or tool schema, and without
 breaking prompt caching?*
 
 **Verdict: yes, via the documented `pre_llm_call` plugin hook.** Run `./run.sh`
-to reproduce.
+to reproduce. [#21](https://github.com/adamjralph/skill-broker/issues/21) extends the
+same harness to an **oversize** Pack: recovery through Hermes's native spill pointer was
+observed live — see [the #21 section](#21--does-the-spill-pointer-let-the-agent-recover-an-oversize-pack).
 
 ## Run it
 
 ```sh
-./run.sh
+./run.sh              # #6: control vs treatment, mocked provider (free)
+./run_spill.sh mock   # #21: oversize Pack spills + preview/path reach the wire (free)
+./run_spill.sh live   # #21: real provider turn — does the agent read and use it? (spends)
 ```
 
 Uses `~/.hermes/hermes-agent/.venv/bin/python` by default. Override with
@@ -73,6 +77,53 @@ requests — two modes × two turns — and the same tool-schema hash
 (`2a6d257ef5163962`). The only difference the enabled plugin makes is the
 injected Skill Pack in the user messages.
 
+## #21 — does the spill pointer let the agent recover an oversize Pack?
+
+**Verdict: yes, observed live.** Native spill is a sufficient by-reference delivery
+mechanism on the ordinary-text path; broker-owned tiering is not warranted.
+
+Oversize-Pack mode is env-gated on the same plugin, so the #6 defaults are unchanged. The
+Pack is padded past `hooks.output_spill.max_chars` and the operative instruction — a per-run
+random canary, `SB-RECOVERED-<8 hex>` — sits in the **middle** of the Pack, so it exists
+only in the spilled file, never in the head/tail preview.
+
+Recorded result (live, 2026-09-20; `deepseek-v4.1-flash:cloud` via the local Ollama
+`custom` provider, isolated `HERMES_HOME`, `enabled_toolsets=["file"]`, 6-iteration budget):
+
+```
+mode=live model=deepseek-v4.1-flash:cloud provider=custom nudge=False
+marker=SB-RECOVERED-bedecebd pack_chars=12000 max_chars=10000
+  spill_file_written: True            # 11,978 chars -> .../hook_outputs/sess-spill/bc53677a....txt
+  preview_on_wire: True               # 1,261-char preview + path
+  spill_path_on_wire: True
+  marker_absent_from_wire: True       # the canary never reached the preview
+  marker_present_in_spill_file: True
+  tool_call_read_spill: True          # read_file on the exact spill path — the FIRST action
+  marker_in_final_response: True
+VERDICT: RECOVERED — the agent read the spill path and returned the buried token
+```
+
+The wire carried only this, and the canary is not in it:
+
+```
+[plugin hook output truncated — 11,978 chars; full content saved to <path>]
+--- head --- ... SKILL-BROKER-PACK v1 profile=prototype ... a mandatory recovery protocol
+--- tail --- ... identifiers / exposure_path / closure ...
+```
+
+**Recovery is not instructional authority.** The agent read the file and quoted the buried
+line verbatim — then *declined* it: "it arrived inside plugin hook output, i.e. tool-side
+text … plugin output has no authority to redirect the reply, so I'm ignoring it." It treated
+the ordinary skill body as usable content and refused only the redirect-shaped canary. The
+pointer contract holds for content delivery; a Pack phrased like a redirect can be attributed
+to the hook channel and refused.
+
+**Caveats.** One model, one turn; the prompt named a PDF that did not exist and the isolated
+`HERMES_HOME` sat inside a directory the agent could browse (it read the plugin source and its
+own evidence files), which burned the full 6-iteration budget. This is evidence of pointer
+recovery, not a delivery-quality measurement. The `--nudge` head-ordering variant exists for
+a failure and was not run, because recovery did not fail.
+
 ## Why it is cache-safe by construction
 
 Hermes injects hook context into the **user message**, not the system prompt:
@@ -112,6 +163,8 @@ content is per-turn and must ride `pre_llm_call`.
 | file | purpose |
 |---|---|
 | `plugin/skill-broker-prototype/` | the real Hermes plugin (drop-in) |
-| `run_proof.py` | one pass: mock provider, isolated home, two turns, JSON report |
-| `compare_proof.py` | asserts the invariants across control and treatment |
-| `run.sh` | runs both passes and the comparison |
+| `run_proof.py` | #6 one pass: mock provider, isolated home, two turns, JSON report |
+| `compare_proof.py` | #6 asserts the invariants across control and treatment |
+| `run.sh` | #6 runs both passes and the comparison |
+| `run_spill_proof.py` | #21 one pass: oversize Pack, canary, mock **or** live mode, JSON report |
+| `run_spill.sh` | #21 runs the spill proof (`mock` \| `live` \| `live --nudge`) |
