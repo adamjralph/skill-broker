@@ -52,6 +52,9 @@ class CutoverTests(unittest.TestCase):
     def external_dirs(self):
         return (yaml.safe_load(self.config.read_text()).get("skills") or {}).get("external_dirs")
 
+    def disabled(self):
+        return (yaml.safe_load(self.config.read_text()).get("skills") or {}).get("disabled")
+
     def apply(self, **kwargs):
         return self.run_cutover("apply", store=self.store, manifest=self.manifest,
                                 farm=self.farm, **kwargs)
@@ -288,16 +291,33 @@ class CutoverTests(unittest.TestCase):
         self.skill(self.native, "method")
         self.assertTrue(self.apply(policy=policy)["ok"])
 
-    def test_policy_gate_rejects_a_brokered_skill_in_the_index(self):
+    def test_policy_gate_withholds_a_brokered_skill_in_the_index(self):
         self.skill(self.store / "one", "brokered", body="store copy")
         self.skill(self.native, "brokered", body="native copy")
         sm.generate(self.store)
         self.exposures(("novel", "one.novel"))
         policy = self.write_policy([{"id": "one.novel"}], ["one.brokered"])
         self.run_cutover()
-        with self.assertRaisesRegex(co.CutoverError, "brokered skill in the index: one.brokered"):
-            self.apply(policy=policy)
-        self.assertEqual(self.external_dirs(), ["/already/there"])
+        result = self.apply(policy=policy)
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["withheld"], ["brokered"])
+        self.assertEqual(self.disabled(), ["brokered"])
+        data = json.loads(self.baseline.read_text())
+        self.assertEqual(data["applied"]["added_disabled"], ["brokered"])
+
+    def test_withholding_covers_a_brokered_alias(self):
+        self.skill(self.store / "one", "brokered", body="store copy")
+        (self.store / "store-meta.json").write_text(json.dumps(
+            {"one/brokered": {"name": "brokered", "aliases": ["brokered-alias"]}}))
+        sm.generate(self.store)
+        self.skill(self.native, "brokered-alias", body="native alias copy")
+        self.exposures(("novel", "one.novel"))
+        policy = self.write_policy([{"id": "one.novel"}], ["one.brokered"])
+        self.run_cutover()
+        result = self.apply(policy=policy)
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["withheld"], ["brokered", "brokered-alias"])
+        self.assertEqual(self.disabled(), ["brokered", "brokered-alias"])
 
     def test_policy_gate_rejects_a_brokered_skill_exposed_by_path(self):
         self.skill(self.store / "one", "brokered", body="store copy")
@@ -316,6 +336,66 @@ class CutoverTests(unittest.TestCase):
         policy = self.write_policy([{"id": "one.tdd"}], ["two.tdd"])
         self.run_cutover()
         self.assertTrue(self.apply(policy=policy)["ok"])
+        self.assertNotIn("tdd", self.disabled() or [])
+
+    def test_rollback_removes_only_the_withheld_names_it_added(self):
+        self.config.write_text(
+            "skills:\n  external_dirs:\n    - /already/there\n  disabled:\n    - keep\n")
+        self.skill(self.store / "one", "brokered", body="store copy")
+        self.skill(self.native, "brokered", body="native copy")
+        sm.generate(self.store)
+        self.exposures(("novel", "one.novel"))
+        policy = self.write_policy([{"id": "one.novel"}], ["one.brokered"])
+        self.run_cutover()
+        self.apply(policy=policy)
+        self.assertEqual(self.disabled(), ["keep", "brokered"])
+        self.run_cutover("rollback")
+        self.assertEqual(self.disabled(), ["keep"])
+        self.assertEqual(self.external_dirs(), ["/already/there"])
+
+    def test_created_block_with_withholding_rolls_back_byte_for_byte(self):
+        self.config.write_text("model: x\n")
+        before = self.config.read_bytes()
+        self.skill(self.store / "one", "brokered", body="store copy")
+        self.skill(self.native, "brokered", body="native copy")
+        sm.generate(self.store)
+        self.exposures(("novel", "one.novel"))
+        policy = self.write_policy([{"id": "one.novel"}], ["one.brokered"])
+        self.run_cutover()
+        self.assertTrue(self.apply(policy=policy)["ok"])
+        self.assertTrue(json.loads(self.baseline.read_text())["applied"]["created_skills_block"])
+        self.run_cutover("rollback")
+        self.assertEqual(before, self.config.read_bytes())
+
+    def test_reapplying_with_withholding_keeps_rollback_exact(self):
+        self.config.write_text("skills:\n  external_dirs:\n    - /already/there\n")
+        before = self.config.read_bytes()
+        self.skill(self.store / "one", "brokered", body="store copy")
+        self.skill(self.native, "brokered", body="native copy")
+        sm.generate(self.store)
+        self.exposures(("novel", "one.novel"))
+        policy = self.write_policy([{"id": "one.novel"}], ["one.brokered"])
+        self.run_cutover()
+        self.apply(policy=policy)
+        once = self.config.read_text()
+        self.assertFalse(self.apply(policy=policy)["changed"])
+        self.assertEqual(once, self.config.read_text())
+        self.run_cutover("rollback")
+        self.assertFalse(self.disabled())
+        self.assertEqual(before, self.config.read_bytes())
+
+    def test_gate_fails_closed_when_a_foundation_is_disabled(self):
+        self.config.write_text(
+            "skills:\n  external_dirs:\n    - /already/there\n  disabled:\n    - foundation\n")
+        self.skill(self.store / "one", "foundation")
+        sm.generate(self.store)
+        self.exposures(("novel", "one.novel"), ("foundation", "one.foundation"))
+        policy = self.write_policy([{"id": "one.foundation"}])
+        self.run_cutover()
+        before = self.config.read_bytes()
+        with self.assertRaisesRegex(co.CutoverError, "foundation not resolving: foundation"):
+            self.apply(policy=policy)
+        self.assertEqual(before, self.config.read_bytes())
 
     def test_policy_gate_records_the_after_resolution_map(self):
         foundation = self.skill(self.store / "one", "foundation")

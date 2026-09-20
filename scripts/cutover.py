@@ -8,8 +8,10 @@ to the Consumer's loader config, and can undo exactly that edit.
 
 The loader config is Hermes's ``config.yaml``: the farm path is added to
 ``skills.external_dirs`` byte-preservingly — creating the top-level ``skills:`` block first
-when the config has none — and rollback removes exactly that edit, restoring the config
-byte-for-byte (removing a block this tool created rather than leaving an empty one).  The gate
+when the config has none — and each Brokered Skill's Name is added to ``skills.disabled`` so it
+is withheld from the automatic index (ADR-0021).  Rollback removes exactly those edits,
+restoring the config byte-for-byte (removing a block this tool created rather than leaving an
+empty one, and never touching a ``disabled`` entry another writer placed there).  The gate
 implements wayfinder #11 section 6.  Without a policy it covers the policy-free conditions:
 
 1. the Exposure Manifest validates against the Store Manifest;
@@ -27,6 +29,10 @@ and then adds the two policy-dependent conditions:
 5'. no Brokered Skill appears in the automatic index, by canonical store realpath or by Name -
     except a Brokered twin that legitimately shares a Foundation's Name (the Name Collision case
     of ADR-0018, whose twin is brokered because Hermes indexes on frontmatter ``name``).
+
+Cutover withholds each Brokered Skill from that index by adding its Name to the Consumer's
+``skills.disabled`` (ADR-0021); item 5' is checked against the withheld index, and rollback
+removes exactly the Names this Cutover added.
 
 The before/after resolution maps are both recorded: the baseline holds the before map under
 ``resolution`` and, once Cutover is applied, the after map under ``applied.resolution``.
@@ -110,12 +116,20 @@ def resolution(roots) -> dict:
     return resolved
 
 
-def _external_dirs(text: str) -> list[str]:
+def _skills_list(text: str, key: str) -> list[str]:
     data = yaml.safe_load(text) or {}
-    dirs = (data.get("skills") or {}).get("external_dirs") or []
-    if not isinstance(dirs, list) or not all(isinstance(d, str) for d in dirs):
-        raise CutoverError("skills.external_dirs must be a list of strings")
-    return dirs
+    values = (data.get("skills") or {}).get(key) or []
+    if not isinstance(values, list) or not all(isinstance(v, str) for v in values):
+        raise CutoverError(f"skills.{key} must be a list of strings")
+    return values
+
+
+def _external_dirs(text: str) -> list[str]:
+    return _skills_list(text, "external_dirs")
+
+
+def _disabled_names(text: str) -> list[str]:
+    return _skills_list(text, "disabled")
 
 
 def _baseline(config: Path, consumer: str, roots) -> dict:
@@ -143,7 +157,7 @@ def _read_baseline(path: Path) -> dict:
     return data
 
 
-# --- config editing: surgical, byte-preserving (Hermes skills.external_dirs) -------------
+# --- config editing: surgical, byte-preserving (Hermes skills.external_dirs/disabled) ------
 
 
 def _top_block(lines: list[str], key: str) -> tuple[int, int] | None:
@@ -180,16 +194,16 @@ def _entry_span(lines: list[str], key_i: int, end: int) -> tuple[int, int]:
     return (first, last) if first is not None else (None, None)
 
 
-def _set_external_dirs(text: str, dirs: list[str]) -> str:
-    """Rewrite skills.external_dirs as a block list, replacing any inline form.
+def _set_child_list(text: str, key: str, values: list[str]) -> str:
+    """Rewrite one ``skills.<key>`` list as a block list, replacing any inline form.
 
     A config with no top-level ``skills:`` key gets the block created after its last top-level
     key, every other byte untouched: ``remove_created_skills_block`` relies on that to restore
-    the config exactly.
+    the config exactly. A missing key in an existing block is appended after its siblings.
     """
     lines = text.splitlines(keepends=True)
-    replacement = (["  external_dirs: []\n"] if not dirs
-                   else ["  external_dirs:\n", *(f"    - {d}\n" for d in dirs)])
+    replacement = ([f"  {key}: []\n"] if not values
+                   else [f"  {key}:\n", *(f"    - {v}\n" for v in values)])
     block = _top_block(lines, "skills")
     if block is None:
         at = _create_block_index(lines)
@@ -198,13 +212,17 @@ def _set_external_dirs(text: str, dirs: list[str]) -> str:
         lines[at:at] = ["skills:\n", *replacement]
         return "".join(lines)
     start, end = block
-    key_i = _child_key(lines, start, end, "external_dirs")
+    key_i = _child_key(lines, start, end, key)
     if key_i is None:
         lines[start + 1:start + 1] = replacement
     else:
         first, last = _entry_span(lines, key_i, end)
         lines[key_i:(last + 1) if first is not None else key_i + 1] = replacement
     return "".join(lines)
+
+
+def _set_external_dirs(text: str, dirs: list[str]) -> str:
+    return _set_child_list(text, "external_dirs", dirs)
 
 
 def add_external_dir(text: str, path: str) -> tuple[str, bool]:
@@ -221,8 +239,53 @@ def remove_external_dir(text: str, path: str) -> tuple[str, bool]:
     return _set_external_dirs(text, [d for d in dirs if d != path]), True
 
 
+def add_disabled_names(text: str, names: list[str]) -> tuple[str, list[str]]:
+    """Add Brokered Names to ``skills.disabled``, preserving existing entries.
+
+    Returns the edited text and exactly the Names this call added, so rollback removes only
+    those and never an entry another writer placed there.
+    """
+    current = _disabled_names(text)
+    added = [name for name in names if name not in current]
+    if not added:
+        return text, []
+    return _set_child_list(text, "disabled", [*current, *added]), added
+
+
+def remove_added_disabled(text: str, names: list[str], key_existed: bool) -> tuple[str, bool]:
+    """Remove only the Names this Cutover added, restoring a pre-existing list."""
+    if not names:
+        return text, False
+    added = set(names)
+    remaining = [n for n in _disabled_names(text) if n not in added]
+    if not remaining and not key_existed:
+        return _remove_child_key(text, "disabled"), True
+    return _set_child_list(text, "disabled", remaining), True
+
+
+def _remove_child_key(text: str, key: str) -> str:
+    """Delete one ``skills.<key>`` entry (inline or block) from the ``skills:`` block."""
+    lines = text.splitlines(keepends=True)
+    block = _top_block(lines, "skills")
+    if block is None:
+        return text
+    start, end = block
+    key_i = _child_key(lines, start, end, key)
+    if key_i is None:
+        return text
+    first, last = _entry_span(lines, key_i, end)
+    del lines[key_i:(last + 1) if first is not None else key_i + 1]
+    return "".join(lines)
+
+
 def _has_skills_block(text: str) -> bool:
     return _top_block(text.splitlines(keepends=True), "skills") is not None
+
+
+def _has_child_key(text: str, key: str) -> bool:
+    lines = text.splitlines(keepends=True)
+    block = _top_block(lines, "skills")
+    return block is not None and _child_key(lines, block[0], block[1], key) is not None
 
 
 def _create_block_index(lines: list[str]) -> int:
@@ -237,28 +300,46 @@ def _create_block_index(lines: list[str]) -> int:
     return index
 
 
-def remove_created_skills_block(text: str, path: str) -> tuple[str, bool]:
+def remove_created_skills_block(text: str, path: str,
+                                added_disabled=()) -> tuple[str, bool]:
     """Undo a ``skills:`` block this tool created, restoring the config exactly.
 
-    Fails closed unless the block holds nothing but the Cutover's own ``external_dirs`` entry,
-    so rollback never discards another writer's keys.
+    Fails closed unless the block holds nothing but the Cutover's own ``external_dirs`` entry
+    and the ``disabled`` entries it added, so rollback never discards another writer's keys.
     """
     lines = text.splitlines(keepends=True)
     block = _top_block(lines, "skills")
     if block is None:
         return text, False
     start, end = block
-    key_i = _child_key(lines, start, end, "external_dirs")
+    spans = {}
+    for key in ("external_dirs", "disabled"):
+        key_i = _child_key(lines, start, end, key)
+        first, last = _entry_span(lines, key_i, end) if key_i is not None else (None, None)
+        spans[key] = (key_i, first, last)
+    key_i, first, last = spans["external_dirs"]
     if key_i is None:
         raise CutoverError("rollback: the created `skills:` block has no external_dirs")
-    first, last = _entry_span(lines, key_i, end)
     entries = [] if first is None else [lines[i] for i in range(first, last + 1)]
     if entries != [f"    - {path}\n"]:
         raise CutoverError("rollback: the created `skills:` block was modified")
-    if [i for i in range(start + 1, end)
-            if lines[i].strip() and not (first is not None and first <= i <= last)] != [key_i]:
+    d_key_i, d_first, d_last = spans["disabled"]
+    if (d_key_i is not None) != bool(added_disabled):
         raise CutoverError("rollback: the created `skills:` block was modified")
-    del lines[start:last + 1]
+    disabled_entries = ([] if d_first is None
+                        else [lines[i] for i in range(d_first, d_last + 1)])
+    if disabled_entries != [f"    - {n}\n" for n in added_disabled]:
+        raise CutoverError("rollback: the created `skills:` block was modified")
+    content = {key_i}
+    if first is not None:
+        content.update(range(first, last + 1))
+    if d_key_i is not None:
+        content.add(d_key_i)
+    if d_first is not None:
+        content.update(range(d_first, d_last + 1))
+    if {i for i in range(start + 1, end) if lines[i].strip()} != content:
+        raise CutoverError("rollback: the created `skills:` block was modified")
+    del lines[start:max(content) + 1]
     return "".join(lines), True
 
 
@@ -280,32 +361,58 @@ def _policy_inputs(store: Path, policy) -> tuple[dict, dict]:
     return data, identities
 
 
-def _policy_problems(policy: dict, identities: dict, store: Path, after: dict) -> list[str]:
-    """wayfinder #11 section 6 items 4-5: the Profile Policy conditions (ADR-0018)."""
+def _entry_name(entry: dict, identities: dict) -> str:
+    """The indexed Name of a Foundation Set entry (a project-wired entry carries it directly)."""
+    return entry["name"] if set(entry) == {"project", "name"} else identities[entry["id"]]["name"]
+
+
+def _foundation_names(policy: dict, identities: dict) -> set[str]:
+    return {_entry_name(entry, identities) for entry in policy["foundation"]}
+
+
+def _identity_names(row: dict) -> list[str]:
+    """Names a Brokered identity may be indexed under: its Name plus its aliases (ADR-0009)."""
+    return list(dict.fromkeys([row["name"], *(row.get("aliases") or [])]))
+
+
+def _withheld_names(policy: dict, identities: dict) -> list[str]:
+    """The Brokered Names Cutover withholds, excluding Foundation Name Collisions (ADR-0021)."""
+    foundation_names = _foundation_names(policy, identities)
+    names: list[str] = []
+    for ident in policy.get("brokered", []):
+        for name in _identity_names(identities[ident]):
+            if name not in foundation_names and name not in names:
+                names.append(name)
+    return names
+
+
+def _policy_problems(policy: dict, identities: dict, store: Path, after: dict,
+                     withheld=()) -> list[str]:
+    """wayfinder #11 section 6 items 4-5: the Profile Policy conditions (ADR-0018/0021)."""
     problems: list[str] = []
+    index = {name: row for name, row in after.items() if name not in set(withheld)}
     foundation_names: set[str] = set()
     for entry in policy["foundation"]:
-        if set(entry) == {"project", "name"}:
-            name = entry["name"]
-        else:
-            # An exposure alias renames a farm path, never the indexed Name (ADR-0018), and the
-            # resolution map is keyed by the indexed frontmatter Name.
-            name = identities[entry["id"]]["name"]
+        # An exposure alias renames a farm path, never the indexed Name (ADR-0018), and the
+        # resolution map is keyed by the indexed frontmatter Name.
+        name = _entry_name(entry, identities)
         foundation_names.add(name)
-        if name not in after:
+        if name not in index:
             problems.append(f"foundation not resolving: {name}")
     after_paths = {row["realpath"] for row in after.values()}
     for ident in policy.get("brokered", []):
         row = identities[ident]
         if str((store / row["path"]).resolve()) in after_paths:
             problems.append(f"brokered skill exposed: {ident}")
-        if row["name"] in after and row["name"] not in foundation_names:
+        if any(name in index and name not in foundation_names
+               for name in _identity_names(row)):
             problems.append(f"brokered skill in the index: {ident}")
     return problems
 
 
 def _gate(before: dict, roots, farm: Path, policy: dict | None = None,
-          identities: dict | None = None, store: Path | None = None) -> tuple[list[str], dict]:
+          identities: dict | None = None, store: Path | None = None,
+          withheld=()) -> tuple[list[str], dict]:
     """wayfinder #11 section 6 checks, policy-free plus (when given) the policy conditions."""
     after = resolution([*roots, farm])
     problems = [f"regression: {name} no longer resolves" for name in sorted(before)
@@ -315,7 +422,7 @@ def _gate(before: dict, roots, farm: Path, policy: dict | None = None,
             if target not in after:
                 problems.append(f"unresolved reference: {name} -> {target}")
     if policy is not None:
-        problems.extend(_policy_problems(policy, identities, store, after))
+        problems.extend(_policy_problems(policy, identities, store, after, withheld=withheld))
     return problems, after
 
 
@@ -333,30 +440,45 @@ def _apply(data: dict, baseline: Path, config: Path, store, manifest, farm,
     store, manifest, farm = _plan_inputs(store, manifest, farm)
     farm = farm.parent.resolve() / farm.name
     policy_data, identities = (None, None)
+    withheld: list[str] = []
     if policy is not None:
         policy_data, identities = _policy_inputs(store, policy)
+        withheld = _withheld_names(policy_data, identities)
     generated = ef.run("generate", store, manifest, farm)
     ef.run("verify", store, manifest, farm)
+    text = config.read_text()
+    # The gate is checked against the index that will result: existing disabled Names plus
+    # the Brokered Names this Cutover is about to withhold (ADR-0021).
+    effective_disabled = list(dict.fromkeys([*_disabled_names(text), *withheld]))
     problems, after = _gate(data["resolution"], data["roots"], farm,
-                            policy=policy_data, identities=identities, store=store)
+                            policy=policy_data, identities=identities, store=store,
+                            withheld=effective_disabled)
     if problems:
         raise CutoverError("; ".join(problems))
-    text = config.read_text()
     created = not _has_skills_block(text)
-    updated, changed = add_external_dir(text, str(farm))
+    disabled_existed = _has_child_key(text, "disabled")
+    updated, farm_added = add_external_dir(text, str(farm))
+    updated, added_disabled = add_disabled_names(updated, withheld)
+    changed = farm_added or bool(added_disabled)
     if changed:
         _validate_external(updated, str(farm), present=True)
         config.write_text(updated)
     else:
-        # An idempotent re-apply must not forget that this Cutover created the block.
-        created = bool((data.get("applied") or {}).get("created_skills_block"))
+        # An idempotent re-apply must not forget what this Cutover created or added.
+        prior = data.get("applied") or {}
+        created = bool(prior.get("created_skills_block"))
+        disabled_existed = bool(prior.get("disabled_key_existed", disabled_existed))
+        added_disabled = list(prior.get("added_disabled", []))
     data["applied"] = {"farm": str(farm),
                        "config_sha256": hashlib.sha256(config.read_text().encode()).hexdigest(),
                        "created_skills_block": created,
+                       "disabled_key_existed": disabled_existed,
+                       "added_disabled": added_disabled,
                        "resolution": after}
     _write_baseline(baseline, data)
     return {"ok": True, "consumer": data["consumer"], "config": str(config), "farm": str(farm),
-            "changed": changed, "exposures": generated["exposures"]}
+            "changed": changed, "exposures": generated["exposures"],
+            "withheld": added_disabled}
 
 
 def _verify(config: Path, store, manifest, farm, policy=None, roots=()) -> dict:
@@ -367,7 +489,7 @@ def _verify(config: Path, store, manifest, farm, policy=None, roots=()) -> dict:
     if policy is not None:
         policy_data, identities = _policy_inputs(store, policy)
         problems, _ = _gate({}, roots, farm, policy=policy_data, identities=identities,
-                            store=store)
+                            store=store, withheld=_disabled_names(config.read_text()))
         if problems:
             raise CutoverError("; ".join(problems))
     return {"ok": True, "consumer": result["consumer"], "config": str(config),
@@ -381,10 +503,14 @@ def _rollback(data: dict, baseline: Path, config: Path) -> dict:
     if not applied:
         return {"ok": True, "consumer": data["consumer"], "config": str(config), "changed": False}
     text = config.read_text()
+    added_disabled = list(applied.get("added_disabled", []))
     if applied.get("created_skills_block"):
-        updated, changed = remove_created_skills_block(text, applied["farm"])
+        updated, changed = remove_created_skills_block(text, applied["farm"], added_disabled)
     else:
-        updated, changed = remove_external_dir(text, applied["farm"])
+        updated, farm_changed = remove_external_dir(text, applied["farm"])
+        updated, disabled_changed = remove_added_disabled(
+            updated, added_disabled, bool(applied.get("disabled_key_existed")))
+        changed = farm_changed or disabled_changed
     if changed:
         _validate_external(updated, applied["farm"], present=False)
         config.write_text(updated)
