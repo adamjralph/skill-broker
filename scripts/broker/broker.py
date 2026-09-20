@@ -21,9 +21,17 @@ import store_manifest as sm
 
 from .closure import authorised_closure
 from .evidence import SessionLedger
+from .judgment import grant, validate
 from .metadata import candidate_profile
 from .retrieval import CANDIDATE_LIMIT, rank
-from .types import Candidate, InterventionResult, ResolvedSkillVersion, RouteDecision, TurnOutcome
+from .types import (
+    Candidate,
+    InterventionResult,
+    Judgment,
+    ResolvedSkillVersion,
+    RouteDecision,
+    TurnOutcome,
+)
 
 
 class Broker:
@@ -59,6 +67,8 @@ class Broker:
         reasons: list[str] = []
         closure: tuple[ResolvedSkillVersion, ...] = ()
         candidates: tuple[Candidate, ...] = ()
+        judgment: Judgment | None = None
+        grants: tuple[ResolvedSkillVersion, ...] = ()
         outcome = TurnOutcome.NO_SKILL
 
         problems = sm.verify(self._store)
@@ -79,6 +89,9 @@ class Broker:
                 reasons.extend(closure_problems)
                 candidates = rank(request, [candidate_profile(self._store, identities[entry.id])
                                             for entry in closure])
+                if self._judgment_source is not None:
+                    outcome, judgment, grants, problems = self._judge(request, candidates, closure)
+                    reasons.extend(problems)
 
         decision = RouteDecision(
             profile=profile,
@@ -90,9 +103,36 @@ class Broker:
             authorised_closure=closure,
             candidate_limit=CANDIDATE_LIMIT,
             candidates=candidates,
+            judgment=judgment,
+            grants=grants,
         )
         self._evidence_log.append(decision)
-        return InterventionResult(outcome=outcome, reasons=decision.reasons, decision=decision)
+        return InterventionResult(outcome=outcome, reasons=decision.reasons, grants=grants,
+                                  decision=decision)
+
+    def _judge(self, request: str, candidates: tuple[Candidate, ...],
+               closure: tuple[ResolvedSkillVersion, ...]) -> tuple[
+                   TurnOutcome, Judgment | None, tuple[ResolvedSkillVersion, ...],
+                   tuple[str, ...]]:
+        """Ask the Judgment Source and validate its answer. Invalid output never grants.
+
+        The Source is an external seam, so anything it raises is a recorded failure rather than
+        a crashed turn; a model returns text, not authority (ADR-0004).
+        """
+        try:
+            claim = self._judgment_source.judge(request, candidates)
+        except Exception as exc:  # noqa: BLE001 — the seam is outside our control
+            return TurnOutcome.FAILURE, None, (), ("judgment_source_error", f"{exc}",)
+        judgment, problems = validate(claim, candidates, closure)
+        if judgment is None:
+            return TurnOutcome.FAILURE, None, (), ("judgment_invalid", *problems)
+        if judgment.no_skill:
+            return TurnOutcome.NO_SKILL, judgment, (), ()
+        grants = grant(judgment, closure)
+        if not grants:
+            return (TurnOutcome.FAILURE, judgment, (),
+                    ("judgment_invalid", f"primary {judgment.primary!r} is not authorised"))
+        return TurnOutcome.GRANTED, judgment, grants, ()
 
     def _policy(self, profile: str, identities: dict[str, dict]) -> tuple[dict | None, tuple[str, ...]]:
         """The profile's policy, or ``(None, ())`` when there is none, plus validation problems."""

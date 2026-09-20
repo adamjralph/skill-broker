@@ -24,7 +24,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 from broker import Broker, JsonlEvidenceLog, SessionLedger, TurnOutcome  # noqa: E402
 from broker_fixture import (  # noqa: E402
     RecordingEvidenceLog,
+    ScriptedJudgmentSource,
     corrupt_policy,
+    judgment_claim,
     remove_policy,
     stale_manifest,
 )
@@ -204,7 +206,8 @@ class SeamContractTest(StoreFixtureTestCase):
         broker = Broker(store=self.store.root,
                         evidence_log=evidence,
                         policies_dir=self.store.root / "policies",
-                        judgment_source=object(),
+                        judgment_source=ScriptedJudgmentSource(
+                            judgment_claim([DISTINCT.id, ALIASED.id], primary=None)),
                         session_ledger=SessionLedger())
 
         result = broker.prepare_turn("Write the release note.", self.store.profile,

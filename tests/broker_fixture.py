@@ -29,6 +29,40 @@ class RecordingEvidenceLog:
         return [decision.to_record() for decision in self.decisions]
 
 
+class ScriptedJudgmentSource:
+    """A deterministic ``JudgmentSource`` returning one scripted claim per turn, in order."""
+
+    def __init__(self, *claims) -> None:
+        self.claims = list(claims)
+
+    def judge(self, request, candidates):
+        return self.claims.pop(0)
+
+
+def judgment_claim(candidate_ids, *, primary, confidence=0.9, no_skill=0.1):
+    """A well-formed Choice over these Candidates, echoing them and the reserved no-skill.
+
+    ``confidence`` (or ``no_skill`` when the Choice is no-skill) is the chosen option's
+    probability; the remainder is spread evenly across the other options.
+    """
+    ids = list(candidate_ids)
+    if primary is None:
+        others = list(ids)
+        share = round((1.0 - no_skill) / len(others), 6) if others else 0.0
+        distribution = {ident: share for ident in others}
+        distribution["no_skill"] = round(1.0 - share * len(others), 6)
+        chosen = distribution["no_skill"]
+    else:
+        others = [ident for ident in ids if ident != primary]
+        share = round((1.0 - confidence) / (len(others) + 1), 6)
+        distribution = {ident: share for ident in others}
+        distribution["no_skill"] = share
+        distribution[primary] = round(1.0 - share * (len(others) + 1), 6)
+        chosen = distribution[primary]
+    return {"primary": primary, "confidence": chosen, "distribution": distribution,
+            "candidates": ids}
+
+
 def stale_manifest(fixture: StoreFixture) -> None:
     """Make the committed Store Manifest disagree with the store on disk."""
     skill_md = next(fixture.root.glob("*/*/SKILL.md"))

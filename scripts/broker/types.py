@@ -15,11 +15,13 @@ class TurnOutcome(str, Enum):
     """How one turn's intervention ended.
 
     ``NO_SKILL`` is a valid routing outcome, including the degraded foundation-only behaviour
-    a missing or malformed Profile Policy produces. ``FAILURE`` is an infrastructure or
-    verification problem that must never be delivered (a stale Store Manifest).
+    a missing or malformed Profile Policy produces. ``GRANTED`` means authority was granted for
+    this turn (delivery itself is Pack assembly). ``FAILURE`` is an infrastructure or
+    verification problem that must never be delivered.
     """
 
     NO_SKILL = "no_skill"
+    GRANTED = "granted"
     FAILURE = "failure"
 
 
@@ -50,12 +52,36 @@ class Candidate:
 
 
 @dataclass(frozen=True)
+class Judgment:
+    """A validated Judgment: a nullable Primary Skill, a confidence, the full probability
+    distribution and the echoed Candidate set (ADR-0013). It grants nothing by itself."""
+
+    primary: str | None
+    confidence: float
+    distribution: dict[str, float]
+    candidates: tuple[str, ...]
+
+    @property
+    def no_skill(self) -> bool:
+        return self.primary is None
+
+    def to_record(self) -> dict:
+        return {
+            "primary": self.primary,
+            "confidence": self.confidence,
+            "distribution": dict(self.distribution),
+            "candidates": list(self.candidates),
+            "no_skill": self.no_skill,
+        }
+
+
+@dataclass(frozen=True)
 class RouteDecision:
     """The complete record of one routing outcome (CONTEXT.md), minus anything textual.
 
-    Later stages extend it with the Judgment, grants, limits and model usage; tickets #46 and
-    #47 record the request identity, the profile, the resolved Authorised Closure, the ranked
-    Candidate set and the reasons — all of which are metadata or hashes.
+    Later stages extend it with limits, timing and model usage; tickets #46-#48 record the
+    request identity, the profile, the resolved Authorised Closure, the ranked Candidate set,
+    the Judgment and the Grants — all of which are metadata or hashes.
     """
 
     profile: str
@@ -67,6 +93,8 @@ class RouteDecision:
     authorised_closure: tuple[ResolvedSkillVersion, ...] = ()
     candidate_limit: int | None = None
     candidates: tuple[Candidate, ...] = ()
+    judgment: Judgment | None = None
+    grants: tuple[ResolvedSkillVersion, ...] = ()
 
     def to_record(self) -> dict:
         return {
@@ -78,6 +106,8 @@ class RouteDecision:
             "authorised_closure": [entry.to_record() for entry in self.authorised_closure],
             "candidate_limit": self.candidate_limit,
             "candidates": [candidate.to_record() for candidate in self.candidates],
+            "judgment": self.judgment.to_record() if self.judgment is not None else None,
+            "grants": [entry.to_record() for entry in self.grants],
         }
 
 
