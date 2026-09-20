@@ -6,9 +6,22 @@ runner without a packaging change: the suites already put ``scripts/`` on ``sys.
 ``import broker`` works, and broker modules import the store tooling (``store_manifest``,
 ``profile_policy``) from the same path with no shim.
 
-The single external seam is ``prepare_turn(request, profile, session_context)`` (ADR-0001),
-built by ticket #46; the internal replaceable seams are the Judgment Source and the Hermes
-Adapter. See the accepted spec (issue #44) and ``PROJECT-OUTLINE.md``.
+The single external seam is ``Broker.prepare_turn(request, profile, session_context)``
+(ADR-0001). The internal replaceable seams are the Judgment Source and the Hermes Adapter.
+See the accepted spec (issue #44) and ``PROJECT-OUTLINE.md``.
 """
 
-__all__: list[str] = []
+from .broker import Broker
+from .evidence import EvidenceLog, JsonlEvidenceLog, SessionLedger
+from .types import InterventionResult, ResolvedSkillVersion, RouteDecision, TurnOutcome
+
+__all__ = [
+    "Broker",
+    "EvidenceLog",
+    "JsonlEvidenceLog",
+    "InterventionResult",
+    "ResolvedSkillVersion",
+    "RouteDecision",
+    "SessionLedger",
+    "TurnOutcome",
+]

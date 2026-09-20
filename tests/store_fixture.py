@@ -41,6 +41,7 @@ class Identity:
     name: str
     body: str
     aliases: tuple[str, ...] = ()
+    dependencies: tuple[str, ...] = ()
 
     @property
     def id(self) -> str:
@@ -107,6 +108,8 @@ def make_store(
     profile: str = DEFAULT_PROFILE,
     foundation: Sequence[str] | None = None,
     brokered: Sequence[str] | None = None,
+    denied: Sequence[str] = (),
+    preferred: Sequence[str] = (),
 ) -> StoreFixture:
     """Build a temporary store that already passes the existing manifest and policy validators.
 
@@ -122,11 +125,13 @@ def make_store(
     meta: dict[str, dict] = {}
     for identity in identities:
         write_identity(root, identity)
-        meta[identity.path] = {"name": identity.name, "aliases": list(identity.aliases)}
+        meta[identity.path] = {"name": identity.name, "aliases": list(identity.aliases),
+                               "dependencies": list(identity.dependencies)}
     (root / sm.META_NAME).write_text(json.dumps(meta, indent=2, sort_keys=True) + "\n")
     sm.generate(root)
 
-    policy_path = write_policy(root, profile, foundation=foundation, brokered=brokered)
+    policy_path = write_policy(root, profile, foundation=foundation, brokered=brokered,
+                               denied=list(denied), preferred=list(preferred))
     return StoreFixture(root=root, profile=profile, policy_path=policy_path, _tmp=tmp)
 
 
@@ -146,6 +151,8 @@ def write_policy(
     *,
     foundation: Sequence[str],
     brokered: Sequence[str],
+    preferred: Sequence[str] = (),
+    denied: Sequence[str] = (),
     **extra: object,
 ) -> Path:
     """Write ``<store>/policies/<profile>.json`` naming the Foundation Set and Brokered Allowlist."""
@@ -154,6 +161,8 @@ def write_policy(
         "profile": profile,
         "foundation": [{"id": ident} for ident in foundation],
         "brokered": list(brokered),
+        "preferred": list(preferred),
+        "denied": list(denied),
     }
     policy.update(extra)
     policies = store / pp.POLICIES_DIR
@@ -171,3 +180,9 @@ class StoreFixtureTestCase(unittest.TestCase):
     def setUp(self) -> None:
         self.store = make_store()
         self.addCleanup(self.store.close)
+
+    def make_store(self, **overrides) -> StoreFixture:
+        """Build a further fixture with these overrides; cleaned up with the test."""
+        fixture = make_store(**overrides)
+        self.addCleanup(fixture.close)
+        return fixture
