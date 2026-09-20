@@ -39,6 +39,16 @@ from .corpus import (
     split_for,
 )
 from .evidence import EvidenceLog, JsonlEvidenceLog, SessionLedger
+from .evaluation import (
+    EvaluationError,
+    EvaluationReport,
+    SoftThresholds,
+    SplitMetrics,
+    ThresholdRegistry,
+    attribute,
+    derive_thresholds,
+    evaluate_profile,
+)
 from .jev import DEFAULT_TIMEOUT as JEV_DEFAULT_TIMEOUT
 from .jev import JevJudgmentSource, live_judgment_source
 from .judgment import (
@@ -78,6 +88,8 @@ __all__ = [
     "CorpusStore",
     "DeliveryPath",
     "EvidenceLog",
+    "EvaluationError",
+    "EvaluationReport",
     "ExtractionReport",
     "FallbackJudgmentSource",
     "FirstCandidateJudgmentSource",
@@ -107,9 +119,15 @@ __all__ = [
     "RouteDecision",
     "SessionLedger",
     "SkillContent",
+    "SoftThresholds",
+    "SplitMetrics",
     "StubJudgmentSource",
+    "ThresholdRegistry",
     "TurnOutcome",
+    "attribute",
     "classify_delivery_path",
+    "derive_thresholds",
+    "evaluate_profile",
     "extract_cases",
     "live_judgment_source",
     "load_reviewed_cases",
