@@ -21,7 +21,9 @@ import store_manifest as sm
 
 from .closure import authorised_closure
 from .evidence import SessionLedger
-from .types import InterventionResult, RouteDecision, TurnOutcome
+from .metadata import candidate_profile
+from .retrieval import CANDIDATE_LIMIT, rank
+from .types import Candidate, InterventionResult, ResolvedSkillVersion, RouteDecision, TurnOutcome
 
 
 class Broker:
@@ -49,9 +51,14 @@ class Broker:
         profile: str,
         session_context: Mapping[str, Any] | None = None,
     ) -> InterventionResult:
-        """Decide this turn's intervention. Exactly one Route Decision is always appended."""
+        """Decide this turn's intervention.
+
+        The Authorised Closure is resolved and ranked into a Candidate set; exactly one Route
+        Decision is always appended. Nothing is judged, granted or delivered in this ticket.
+        """
         reasons: list[str] = []
-        closure: tuple = ()
+        closure: tuple[ResolvedSkillVersion, ...] = ()
+        candidates: tuple[Candidate, ...] = ()
         outcome = TurnOutcome.NO_SKILL
 
         problems = sm.verify(self._store)
@@ -70,6 +77,8 @@ class Broker:
             else:
                 closure, closure_problems = authorised_closure(policy, identities)
                 reasons.extend(closure_problems)
+                candidates = rank(request, [candidate_profile(self._store, identities[entry.id])
+                                            for entry in closure])
 
         decision = RouteDecision(
             profile=profile,
@@ -79,6 +88,8 @@ class Broker:
             request_sha256=hashlib.sha256(request.encode("utf-8")).hexdigest(),
             request_chars=len(request),
             authorised_closure=closure,
+            candidate_limit=CANDIDATE_LIMIT,
+            candidates=candidates,
         )
         self._evidence_log.append(decision)
         return InterventionResult(outcome=outcome, reasons=decision.reasons, decision=decision)

@@ -13,10 +13,19 @@ See the accepted spec (issue #44) and ``PROJECT-OUTLINE.md``.
 
 from .broker import Broker
 from .evidence import EvidenceLog, JsonlEvidenceLog, SessionLedger
-from .types import InterventionResult, ResolvedSkillVersion, RouteDecision, TurnOutcome
+from .retrieval import CANDIDATE_LIMIT
+from .types import (
+    Candidate,
+    InterventionResult,
+    ResolvedSkillVersion,
+    RouteDecision,
+    TurnOutcome,
+)
 
 __all__ = [
     "Broker",
+    "CANDIDATE_LIMIT",
+    "Candidate",
     "EvidenceLog",
     "JsonlEvidenceLog",
     "InterventionResult",

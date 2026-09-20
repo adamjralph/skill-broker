@@ -21,6 +21,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Sequence
 
+import yaml
+
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 import profile_policy as pp  # noqa: E402
 import store_manifest as sm  # noqa: E402
@@ -42,6 +44,8 @@ class Identity:
     body: str
     aliases: tuple[str, ...] = ()
     dependencies: tuple[str, ...] = ()
+    description: str = ""
+    tags: tuple[str, ...] = ()
 
     @property
     def id(self) -> str:
@@ -57,7 +61,9 @@ ALIASED = Identity(
     owner="local",
     slug="writing-method",
     name="writing-method",
-    aliases=("local-writing", "writing"),
+    aliases=("local-writing", "prose-method"),
+    description="Use when writing or editing prose and long-form content.",
+    tags=("editing", "prose"),
     body="# Writing method\n\nA deterministic writing procedure.\n",
 )
 
@@ -66,6 +72,8 @@ DISTINCT = Identity(
     owner="nousresearch",
     slug="hermes-agent",
     name="hermes-agent",
+    description="Use when operating the Hermes agent loop and its configuration.",
+    tags=("agent", "configuration"),
     body="# Hermes agent\n\nOperating the Hermes agent loop.\n",
 )
 
@@ -139,9 +147,12 @@ def write_identity(store: Path, identity: Identity) -> Path:
     """Write one ``<owner>/<slug>/SKILL.md`` under ``store``; returns its directory."""
     skill_dir = store / identity.path
     skill_dir.mkdir(parents=True)
-    (skill_dir / "SKILL.md").write_text(
-        f"---\nname: {identity.name}\ndescription: fixture identity\n---\n\n{identity.body}"
-    )
+    frontmatter: dict = {"name": identity.name,
+                         "description": identity.description or "fixture identity"}
+    if identity.tags:
+        frontmatter["metadata"] = {"hermes": {"tags": list(identity.tags)}}
+    header = yaml.safe_dump(frontmatter, sort_keys=False).strip()
+    (skill_dir / "SKILL.md").write_text(f"---\n{header}\n---\n\n{identity.body}")
     return skill_dir
 
 

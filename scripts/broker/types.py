@@ -36,12 +36,26 @@ class ResolvedSkillVersion:
 
 
 @dataclass(frozen=True)
+class Candidate:
+    """One Skill surfaced by Retrieval as potentially relevant — an input to Judgment, never
+    authority (CONTEXT.md). ``exact`` marks a Tier-0 ID/Name/Alias mention."""
+
+    id: str
+    name: str
+    score: float
+    exact: bool
+
+    def to_record(self) -> dict:
+        return {"id": self.id, "name": self.name, "score": self.score, "exact": self.exact}
+
+
+@dataclass(frozen=True)
 class RouteDecision:
     """The complete record of one routing outcome (CONTEXT.md), minus anything textual.
 
-    Later stages extend it with candidates, Judgment, grants, limits and model usage; ticket
-    #46 records the request identity, the profile, the resolved Authorised Closure and the
-    reasons, all of which are metadata or hashes.
+    Later stages extend it with the Judgment, grants, limits and model usage; tickets #46 and
+    #47 record the request identity, the profile, the resolved Authorised Closure, the ranked
+    Candidate set and the reasons — all of which are metadata or hashes.
     """
 
     profile: str
@@ -51,6 +65,8 @@ class RouteDecision:
     request_sha256: str
     request_chars: int
     authorised_closure: tuple[ResolvedSkillVersion, ...] = ()
+    candidate_limit: int | None = None
+    candidates: tuple[Candidate, ...] = ()
 
     def to_record(self) -> dict:
         return {
@@ -60,6 +76,8 @@ class RouteDecision:
             "reasons": list(self.reasons),
             "request": {"sha256": self.request_sha256, "chars": self.request_chars},
             "authorised_closure": [entry.to_record() for entry in self.authorised_closure],
+            "candidate_limit": self.candidate_limit,
+            "candidates": [candidate.to_record() for candidate in self.candidates],
         }
 
 
