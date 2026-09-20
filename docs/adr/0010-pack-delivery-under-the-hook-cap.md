@@ -25,3 +25,12 @@ its own deterministic artifact and returning a bounded frame — deferred, not r
 is adopted only if a prototype shows the native spill pointer fails to let the agent
 recover the content; the Adapter raising `hooks.output_spill.max_chars` — rejected, it
 inflates every plugin's every subsequent turn.
+
+_Confirmed (2026-09-20, [#21](https://github.com/adamjralph/skill-broker/issues/21))_: a live
+Hermes turn recovered an oversize Pack through the native spill pointer — the agent's first
+action was reading the spilled path, and it returned a canary buried mid-Pack and absent from
+the head/tail preview (11,978-char Pack, 1,261-char preview). The pointer contract holds on the
+ordinary-text path, so native spill stands and broker-owned tiering is **not** adopted. Recovery
+is content delivery, not instructional authority: the agent read the buried instruction and
+refused it as hook-side text with no authority to redirect the reply, so a Pack must be framed
+as skill guidance rather than as a redirect.

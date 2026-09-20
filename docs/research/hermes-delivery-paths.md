@@ -14,11 +14,11 @@ The three columns are deliberately independent.
 
 | Request path | (a) `pre_llm_call` fires / Intervention can be injected | (b) injected context reaches API request payload | (c) a by-reference Pack can be recovered downstream |
 |---|---|---|---|
-| Ordinary text user message, normal chat-completions/compatible route | **supported** (source) | **supported** (source + executable test) | **unknown** (source establishes a pointer is emitted, not that a downstream agent actually reads it; complementary spill-pointer investigation #21 is still required) |
+| Ordinary text user message, normal chat-completions/compatible route | **supported** (source) | **supported** (source + executable test) | **supported** (live observation, [#21](https://github.com/adamjralph/skill-broker/issues/21): on an ordinary text turn the agent's first action was reading the spilled path, and it returned a mid-Pack canary absent from the preview; one model, one turn) |
 | Multimodal user content (`content` is a list of text/image/attachment parts) | **supported** (source) | **unsupported** for the `pre_llm_call` injection channel (source) | **unsupported** for a Pack delivered through that channel: no injected pointer reaches the request (source consequence; no live observation) |
 | MoA (ordinary text) | **supported** (source) | **supported** for the assembled MoA request (source; no live observation) | **unknown**: the pointer can be present in the MoA request, but recovery by advisors/aggregator is not established by Hermes source (policy/runtime integration question) |
 | `codex_app_server` (text) | **supported** (source: prologue still collects the hook) | **unsupported** for this seam (source + executable regression test) | **unsupported** through this seam: the pointer is not passed to `turn/start` (source) |
-| Context-engine `select_context()` returns `None` / does not override | **supported** (source) | **supported** (source: request is unchanged) | **unknown**, same native-spill recovery question as ordinary text |
+| Context-engine `select_context()` returns `None` / does not override | **supported** (source) | **supported** (source: request is unchanged) | **supported** for ordinary text by the #21 live observation; a no-op engine preserves the request that carries the pointer |
 | Context-engine `select_context()` returns a replacement request | **supported** (source) | **unknown**: an engine may replace the request and can omit the injected user message (source) | **unknown**: depends on the replacement and on downstream pointer recovery |
 | Context-engine transformation/compaction that rewrites history before the request | **supported** for hook invocation (source) | **unknown** for preservation of the current Pack: the cited seam does not prove every engine preserves it (source) | **unknown** |
 
@@ -108,13 +108,22 @@ Hermes source alone cannot promote the latter to supported.
 `tools/hook_output_spill.py:55-101` implements that behaviour and explicitly
 returns a pointer only after attempting the write; on write failure it returns a
 preview saying the spill is unavailable. This proves pointer production and the
-failure mode, not downstream content recovery.
+failure mode, not downstream content recovery — which #21 later supplied (below).
 
 The broker design makes the same distinction: `docs/adr/0010-pack-delivery-under-the-hook-cap.md:1-15`
 defines spill as a presentation threshold and requires a Pack to be delivered
 complete, while `:17-20` defers broker-owned tiering until a prototype shows the
-native spill pointer fails. That is why this report leaves column (c) unknown
-rather than claiming that a pointer is sufficient.
+native spill pointer fails.
+
+#21 supplied the missing end-to-end observation for the ordinary-text path. In a live turn
+(`prototype/hermes-intervention-seam` branch, `run_spill_proof.py --mode live`) an 11,978-char
+Pack spilled above the default 10,000-char cap; the wire carried only the 1,261-char preview
+plus path; the agent's **first action** was `read_file` on that path, and it returned a canary
+buried mid-Pack and absent from the preview. Column (c) for ordinary text therefore moves from
+unknown to supported, and native spill stands (broker-owned tiering is not adopted). Recovery
+of content is not instructional authority: the agent read the buried instruction and refused it
+as hook-side text with no authority to redirect the reply. The MoA, context-engine-replacement,
+and `codex_app_server` rows are unaffected.
 
 ## Recommended fallback options
 
@@ -149,15 +158,15 @@ Ranked from strongest delivery guarantee to least disruptive:
    behaviour alone is not a delivery guarantee.
 
 Recommended default pending Adam's decisions: options 1 and 2 for multimodal and
-`codex_app_server`; option 3 for oversize Packs on all otherwise supported paths;
-option 2 for a context engine that replaces the request; and no claim of
-by-reference support until #21 supplies the missing recovery evidence.
+`codex_app_server`; **by-reference delivery (native spill) on ordinary text and
+no-op-engine paths, now that #21 evidences recovery**; option 2 for a context
+engine that replaces the request; and no claim of by-reference support for MoA
+participants.
 
 ## Open questions and uncertainty
 
-* Has the spill pointer been successfully read by the actual downstream agent in
-  the ordinary-text path? This report intentionally does not answer the separate
-  #21 investigation.
+* ~~Has the spill pointer been successfully read by the actual downstream agent in
+  the ordinary-text path?~~ Answered by #21: yes (live observation, one model).
 * Should a brokered intervention be refused, or should Hermes silently/native-index
   degrade, when the seam is unsupported? **Adam's decision required.**
 * Is the local spill directory readable to every MoA advisor and aggregator, and
