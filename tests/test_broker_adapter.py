@@ -42,6 +42,7 @@ from broker.adapter import (  # noqa: E402
     request_text,
 )
 from broker.pack import DEFAULT_ADAPTER_RESERVE, DEFAULT_HOOK_CAP  # noqa: E402
+from broker.gate import InjectionBatch, GateReview, InjectionGate  # noqa: E402
 from broker_fixture import RecordingEvidenceLog  # noqa: E402
 from store_fixture import ALIASED, DISTINCT, StoreFixtureTestCase  # noqa: E402
 
@@ -326,12 +327,18 @@ class RegistrationTest(AdapterTestCase):
 
     def test_from_context_composes_a_broker_over_the_configured_store(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
+            # The switch is operator-controlled: a batch must be enabled on a recorded review
+            # before injection can happen, even with ``inject`` set in the plugin config.
+            gate = InjectionGate(state_path=Path(tmp) / "gate.json")
+            gate.enable(
+                InjectionBatch(name="pilot", profile=self.store.profile),
+                GateReview(profile=self.store.profile, batch="pilot", reviewer="test",
+                           outcome="approve", reviewed_at="2026-09-21T00:00:00+00:00"))
             ctx = FakePluginContext({
                 "store": str(self.store.root),
                 "profile": self.store.profile,
                 "evidence_dir": tmp,
                 "judgment": "first_candidate",
-                "inject": True,
             })
 
             adapter = Adapter.from_context(ctx)

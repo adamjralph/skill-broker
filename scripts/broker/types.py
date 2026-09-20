@@ -176,6 +176,7 @@ class InterventionResult:
     pack: str | None = None
     delivery: PackDelivery | None = None
     decision: RouteDecision | None = None
+    failed_closed: bool = False
 
     @property
     def failed(self) -> bool:

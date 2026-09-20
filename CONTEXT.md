@@ -286,9 +286,36 @@ offline.
 _Avoid_: snapshot, fixture
 
 **Hard Gate**:
-A routing-quality condition that must hold regardless of evaluation data. A breach fails the
-profile closed; never negotiated by a corpus or baseline.
+A routing-quality condition that must hold regardless of evaluation data, checked on every turn.
+A breach fails the profile closed; never negotiated by a corpus or baseline.
 _Avoid_: must-have, blocker
+
+**Injection Batch**:
+A named group of Brokered Skills one recorded review authorises the broker to inject for one
+profile. Injection is off until a batch is enabled, and enabling names the profile and the batch.
+_Avoid_: rollout, release
+
+**Batch Review**:
+The recorded review that authorises enabling one Injection Batch, naming the profile and the
+batch. After a Hard-Gate breach, only a review recorded after the breach may re-enable it.
+_Avoid_: sign-off, ticket
+
+**Injection Gate**:
+The durable injection switch and its enforcement: it keeps injection off until a batch is enabled,
+checks the Hard Gates on every turn, fails a profile closed on a breach, and holds expansion on a
+Soft-Threshold regression. Its state is observable.
+_Avoid_: feature flag, kill switch
+
+**Incident**:
+The durable record of one Hard-Gate breach: the gate, the turn's correlation ids and reason
+markers, and when it happened. An Incident fails the profile closed and is never rewritten.
+_Avoid_: alert, warning
+
+**Failed Closed**:
+The state a profile enters on a Hard-Gate breach: foundation-only with injection off, until a
+review recorded after the breach re-enables a batch. The turn that breached cannot flip the
+switch back.
+_Avoid_: disabled, degraded
 
 **Soft Threshold**:
 A routing-quality threshold derived from the measured Stage 5 baseline over the reviewed replay

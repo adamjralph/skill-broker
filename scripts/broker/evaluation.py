@@ -47,6 +47,9 @@ from .corpus import (
     write_canonical,
 )
 from .evidence import SessionLedger
+# ``soft_threshold_regression`` is defined in ``gate`` (the module that enforces the expansion
+# block) and re-exported here, where the Soft Thresholds themselves live, for evaluation callers.
+from .gate import soft_threshold_regression
 from .judgment import RecordingMismatch
 from .types import RouteDecision, TurnOutcome
 
@@ -565,4 +568,5 @@ __all__ = [
     "attribute",
     "derive_thresholds",
     "evaluate_profile",
+    "soft_threshold_regression",
 ]

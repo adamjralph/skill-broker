@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import hashlib
 import time
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -23,6 +24,7 @@ import store_manifest as sm
 
 from .closure import authorised_closure
 from .evidence import SessionLedger
+from .gate import check_hard_gates
 from .judgment import JudgmentCall, grant, validate
 from .metadata import candidate_profile
 from .pack import HookConfig, Pack, build_pack, resolve_budget
@@ -49,6 +51,7 @@ class Broker:
         judgment_source=None,
         session_ledger=None,
         hook: HookConfig | None = None,
+        gate=None,
     ) -> None:
         self._store = Path(store)
         self._policies_dir = (Path(policies_dir) if policies_dir is not None
@@ -57,6 +60,7 @@ class Broker:
         self._evidence_log = evidence_log
         self._session_ledger = session_ledger if session_ledger is not None else SessionLedger()
         self._hook = hook if hook is not None else HookConfig()
+        self._gate = gate
 
     def prepare_turn(
         self,
@@ -82,9 +86,17 @@ class Broker:
         grants: tuple[ResolvedSkillVersion, ...] = ()
         outcome = TurnOutcome.NO_SKILL
         pack: Pack | None = None
+        policy: Mapping | None = None
+        foundation_ids: tuple[str, ...] = ()
+        failed_closed = False
         budget = resolve_budget(self._hook, {})[0]
 
-        if context.get("delivery_supported", True) is False:
+        if self._gate is not None and self._gate.failed_closed(profile):
+            # A breach already failed this profile closed: the turn is foundation-only and the
+            # Store is not consulted, so a failed profile cannot keep brokering (AC2).
+            failed_closed = True
+            reasons.append("injection_failed_closed")
+        elif context.get("delivery_supported", True) is False:
             # A delivery path that cannot carry the seam (the Adapter classifies it) has nothing
             # to deliver, so the turn falls back to native foundation exposure. The Route
             # Decision still records the turn and why, and the Store is never read.
@@ -110,6 +122,9 @@ class Broker:
                 else:
                     closure, closure_problems = authorised_closure(policy, identities)
                     reasons.extend(closure_problems)
+                    foundation_ids = tuple(
+                        entry["id"] for entry in policy.get("foundation", ())
+                        if isinstance(entry, dict) and "id" in entry)
                     candidates = rank(request, [candidate_profile(self._store, identities[entry.id])
                                                 for entry in closure])
                     if self._judgment_source is not None:
@@ -160,11 +175,29 @@ class Broker:
                          if pack is not None else None),
             budget=budget.to_record(),
         )
+        if self._gate is not None and not failed_closed:
+            breaches = check_hard_gates(decision, foundation_ids=foundation_ids)
+            if breaches:
+                # A data-independent breach reverts the profile to foundation-only with
+                # injection off, within the turn, and records the Incident naming the gate.
+                self._gate.fail_closed(
+                    profile, breaches, reasons=tuple(reasons), turn_id=decision.turn_id,
+                    session_id=decision.session_id,
+                    route_decision_id=decision.route_decision_id)
+                reasons.append("hard_gate_breach:" + ",".join(breaches))
+                decision = replace(
+                    decision, outcome=TurnOutcome.NO_SKILL, reasons=tuple(reasons), grants=(),
+                    delivery=None, pack_chars=None, pack_sha256=None)
+                outcome = TurnOutcome.NO_SKILL
+                grants = ()
+                pack = None
         self._evidence_log.append(decision)
         return InterventionResult(outcome=outcome, reasons=decision.reasons, grants=grants,
                                   pack=pack.text if pack is not None else None,
                                   delivery=pack.delivery if pack is not None else None,
-                                  decision=decision)
+                                  decision=decision,
+                                  failed_closed=self._gate is not None
+                                  and self._gate.failed_closed(profile))
 
     def _dedupe(self, pack: Pack, session_id: str | None) -> tuple[Pack | None, bool]:
         """Suppress a Pack whose every content hash is already supplied in this conversation.

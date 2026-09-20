@@ -36,6 +36,7 @@ from typing import Any, Callable, Protocol, runtime_checkable
 
 from .broker import Broker
 from .evidence import JsonlEvidenceLog, append_jsonl
+from .gate import HardGate, InjectionGate
 from .judgment import (
     FallbackJudgmentSource,
     FirstCandidateJudgmentSource,
@@ -124,6 +125,7 @@ class ApiRequestEvidence:
     tool_count: int = 0
     system_prompt_sha256: str = ""
     system_prompt_chars: int = 0
+    tool_schema_sha256: str = ""
     request_char_count: int = 0
     route_decision_id: str | None = None
 
@@ -139,6 +141,7 @@ class ApiRequestEvidence:
             "tool_count": self.tool_count,
             "system_prompt_sha256": self.system_prompt_sha256,
             "system_prompt_chars": self.system_prompt_chars,
+            "tool_schema_sha256": self.tool_schema_sha256,
             "request_char_count": self.request_char_count,
             "route_decision_id": self.route_decision_id,
         }
@@ -256,17 +259,26 @@ class Adapter:
         request_evidence: RequestEvidenceLog | None = None,
         inject: bool = False,
         runtime_api_mode: Callable[[], str] | None = None,
+        gate: InjectionGate | None = None,
     ) -> None:
         self._broker = broker
         self._profile = profile
         self._request_evidence = request_evidence
         self._inject = bool(inject)
         self._runtime_api_mode = runtime_api_mode or configured_api_mode
+        self._gate = gate
         self._decisions: dict[str, str] = {}
 
     @property
     def injecting(self) -> bool:
-        """Whether this Adapter would emit an Intervention. Shadow Mode is ``False``."""
+        """Whether this Adapter would emit an Intervention. Shadow Mode is ``False``.
+
+        With a gate the per-batch switch is authoritative: injection is on only when the profile's
+        batch is enabled and the profile is not failed closed. Without one, the direct ``inject``
+        flag is the Shadow Mode switch.
+        """
+        if self._gate is not None:
+            return self._gate.injecting(self._profile)
         return self._inject
 
     def register(self, ctx: Any) -> None:
@@ -307,10 +319,15 @@ class Adapter:
         tool_count: int = 0,
         system_prompt: object = None,
         request_messages: object = None,
+        request: object = None,
         request_char_count: int = 0,
         **kwargs: Any,
     ) -> None:
-        """The evidence handle: append one record for this provider request."""
+        """The evidence handle: append one record for this provider request.
+
+        ``request`` is the host's full API payload; its tool schema is hashed when present, so a
+        schema edit that keeps the tool count is still visible to the prompt/tool-schema gate.
+        """
         del kwargs
         try:
             prompt = system_prompt if system_prompt is not None \
@@ -328,14 +345,39 @@ class Adapter:
                 tool_count=_int(tool_count),
                 system_prompt_sha256=hashlib.sha256(text.encode("utf-8")).hexdigest(),
                 system_prompt_chars=len(text),
+                tool_schema_sha256=_tool_schema_sha256(request),
                 request_char_count=_int(request_char_count),
                 route_decision_id=self._decisions.get(turn),
             )
             if self._request_evidence is not None:
                 self._request_evidence.append(record)
+            if self._gate is not None and record.session_id:
+                self._observe_prompt_schema(record)
         except Exception:  # noqa: BLE001 — evidence must never break the turn
             logger.warning("Skill Broker evidence handle failed", exc_info=True)
         return None
+
+    def _observe_prompt_schema(self, record: ApiRequestEvidence) -> None:
+        """Check the system prompt and tool schema against the conversation's baseline (AC1).
+
+        Cache safety should make them byte-identical across a conversation. A change is a
+        Hard-Gate breach: the profile fails closed and an Incident names the gate. It is checked
+        on every provider request, which is stricter than once per turn. This gate is observed at
+        the provider request rather than at ``pre_llm_call`` because that is the only seam where
+        the assembled prompt and tools exist; a mutation therefore closes the profile from the
+        next provider request on, and the current turn's Pack is unchanged by it.
+        """
+        ok, _baseline = self._gate.observe_request(
+            self._profile, record.session_id,
+            system_prompt_sha256=record.system_prompt_sha256, tool_count=record.tool_count,
+            tool_schema_sha256=record.tool_schema_sha256)
+        if ok or self._gate.failed_closed(self._profile):
+            return
+        self._gate.fail_closed(
+            self._profile, (HardGate.PROMPT_SCHEMA_MUTATION.value,),
+            reasons=("the system prompt or tool schema changed within the conversation",),
+            turn_id=record.turn_id or None, session_id=record.session_id,
+            route_decision_id=record.route_decision_id)
 
     def _intervene(self, *, session_id: str, task_id: str, turn_id: str,
                    user_message: object) -> dict | None:
@@ -353,7 +395,7 @@ class Adapter:
         )
         if result.decision is not None and turn_id:
             self._remember(turn_id, result.decision.route_decision_id)
-        if not path.supported or not self._inject or not result.pack:
+        if not path.supported or not self.injecting or not result.pack:
             return None
         return {"context": result.pack}
 
@@ -376,18 +418,21 @@ class Adapter:
         }
         profile = settings["profile"] or default_profile()
         evidence_dir = Path(str(settings["evidence_dir"] or _default_evidence_dir())).expanduser()
+        gate = InjectionGate.in_evidence_dir(evidence_dir)
         if broker is None:
             broker = Broker(
                 store=Path(str(settings["store"])).expanduser(),
                 evidence_log=JsonlEvidenceLog(evidence_dir / "route_decisions.jsonl"),
                 judgment_source=judgment_source_from(**settings),
                 hook=hook_config if hook_config is not None else hermes_hook_config(),
+                gate=gate,
             )
         return cls(
             broker=broker,
             profile=str(profile),
             request_evidence=JsonlRequestEvidenceLog(evidence_dir / "api_requests.jsonl"),
             inject=bool(settings["inject"]),
+            gate=gate,
         )
 
 
@@ -419,6 +464,25 @@ def _system_prompt_from_messages(request_messages: object) -> str | None:
             content = message.get("content")
             return content if isinstance(content, str) else None
     return None
+
+
+def _tool_schema_sha256(request: object) -> str:
+    """A canonical hash of the request body's tool schema, or ``""`` when the host omits it.
+
+    The schema is provider-shaped, so it is hashed as data and never interpreted: a same-count
+    edit changes the hash, which is what makes the tool-schema arm of the gate real.
+    """
+    if not isinstance(request, Mapping):
+        return ""
+    body = request.get("body")
+    if not isinstance(body, Mapping):
+        return ""
+    tools = body.get("tools")
+    if tools is None:
+        return ""
+    blob = json.dumps(tools, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
+                      default=str)
+    return hashlib.sha256(blob.encode("utf-8")).hexdigest()
 
 
 def _positive_int(value: object, default: int) -> int:

@@ -28,8 +28,10 @@ is implemented through ticket #55: the `prepare_turn` seam, Authorised Closure, 
 Retrieval, Judgment validation and the Grant, Skill Pack assembly with Pack Delivery and
 duplicate suppression, the live Jev Judgment Source with its recorded/No-Skill fallback, the
 Hermes Adapter at the cache-safe seam in Shadow Mode, the machine-local Replay Corpus with
-Reviewed Cases and SHA-bound Recordings, and the offline routing evaluation with its pre-registered
-Soft Thresholds. Stage 6's Shadow Report and batch review is next.
+Reviewed Cases and SHA-bound Recordings, the offline routing evaluation with its pre-registered
+Soft Thresholds, and the injection gate: the data-independent Hard Gates checked on every turn,
+fail-closed with a recorded Incident, and the per-batch injection switch. Injection stays off by
+default. Stage 6's Shadow Report and batch review is next.
 
 Canonical documents:
 

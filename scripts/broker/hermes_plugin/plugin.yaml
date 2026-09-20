@@ -11,4 +11,4 @@ config_schema:
   evidence_dir: {type: str, default: "", description: "Where Route Decisions and request evidence are appended"}
   judgment: {type: str, default: "live", description: "Judgment Source: live | recorded | first_candidate | no_skill"}
   recording: {type: str, default: "", description: "Recording JSON path when judgment is 'recorded'"}
-  inject: {type: bool, default: false, description: "Emit the Pack for the turn. Off is Shadow Mode."}
+  inject: {type: bool, default: false, description: "Deprecated Shadow Mode default; the per-batch gate state under evidence_dir is authoritative"}
