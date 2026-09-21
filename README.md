@@ -41,7 +41,9 @@ routine: one additive batch at a time, on fresh evidence with its own review, wi
 Thresholds held (or re-derived only against a strictly larger corpus), the rollback rehearsed
 before enabling, the post-batch foundation-resolution and hash checks reported, and an open
 Incident failing expansion closed. The second batch is rehearsed end to end against the real
-store (`tests/hermes_adapter/run_expansion_proof.py`).
+store (`tests/hermes_adapter/run_expansion_proof.py`). Stage 9 retirement is defined (#23,
+ADR-0023): retirement is a reversible, batched archive gated on explicit approval, deletion is a
+separate purge, and execution stays blocked until every Consumer resolves through the store.
 
 Canonical documents:
 
@@ -50,6 +52,7 @@ Canonical documents:
 - issue #44 — the accepted specification for the broker half
 - [`docs/HANDOFF.md`](./docs/HANDOFF.md) — the live continuation state and next action
 - [`docs/runbooks/expansion.md`](./docs/runbooks/expansion.md) — the measured-expansion routine
+- [`docs/retirement/`](./docs/retirement/README.md) — the Stage 9 retirement process
 
 ## Delivery stages
 

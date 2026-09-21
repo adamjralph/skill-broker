@@ -104,9 +104,15 @@ reversible.
 _Avoid_: switch, flip, replacement
 
 **Retirement**:
-The removal of a superseded path after every Consumer resolves through the Skill Store.
-Requires explicit approval; the only irreversible migration act.
+The reversible withdrawal of a superseded path after every Consumer resolves through the Skill
+Store: the path is moved to a dated, manifest-backed retired set that restores byte-for-byte.
+Batched and reviewed; never a deletion.
 _Avoid_: deletion, cleanup, prune
+
+**Purge**:
+The irreversible deletion of retired content after a retention window, approved explicitly and
+separately from Retirement. The only irreversible migration act.
+_Avoid_: retirement, cleanup, prune
 
 ### Exposure and policy
 
