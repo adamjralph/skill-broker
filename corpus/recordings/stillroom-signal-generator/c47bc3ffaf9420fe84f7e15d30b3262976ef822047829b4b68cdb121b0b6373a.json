@@ -1,0 +1,26 @@
+{
+  "case_sha256": "c47bc3ffaf9420fe84f7e15d30b3262976ef822047829b4b68cdb121b0b6373a",
+  "claim": {
+    "candidates": [
+      "coreyhaines31.copywriting",
+      "coreyhaines31.cold-email",
+      "nousresearch.humanizer",
+      "hermes_engineer.message-composer",
+      "life-os.stillroom-writing-workflow",
+      "local.adam-content-writing",
+      "nousresearch.hermes-agent"
+    ],
+    "confidence": 0.84,
+    "distribution": {
+      "coreyhaines31.cold-email": 0.0,
+      "coreyhaines31.copywriting": 0.01,
+      "hermes_engineer.message-composer": 0.0,
+      "life-os.stillroom-writing-workflow": 0.86,
+      "local.adam-content-writing": 0.04,
+      "no_skill": 0.09,
+      "nousresearch.hermes-agent": 0.0,
+      "nousresearch.humanizer": 0.0
+    },
+    "primary": "life-os.stillroom-writing-workflow"
+  }
+}
