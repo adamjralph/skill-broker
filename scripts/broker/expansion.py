@@ -255,6 +255,20 @@ def _re_enable(gate: InjectionGate, profile: str, batch: InjectionBatch) -> None
     ))
 
 
+def _withdraw(gate: InjectionGate, profile: str, previous: InjectionBatch | None, *,
+              reason: str) -> None:
+    """Withdraw a batch this step enabled and restore the previous exposure.
+
+    The new batch is only live between :func:`~broker.report.apply_review` and the post-batch
+    checks. If those checks cannot run — an empty window or a raising probe — the profile must be
+    left exactly as it was before the step, so a failed expansion is a revert and never a partial
+    enable. A profile with nothing to restore is left foundation-only, the safe direction.
+    """
+    gate.disable(profile, reason=reason)
+    if previous is not None:
+        _re_enable(gate, profile, previous)
+
+
 def verify_thresholds(registry: ThresholdRegistry | None, profile: str, *,
                       report=None, allow_re_derivation: bool = False,
                       registered_at: str | None = None) -> ThresholdDecision:
@@ -358,13 +372,17 @@ def expand(*, gate: InjectionGate, report: ShadowReport, reviewer: str, post_pro
         raise ExpansionError(str(exc)) from exc
     # The durable review the gate stored (its clock may have stamped an empty ``reviewed_at``).
     recorded_review = gate.last_review(profile) or reviewed.review or {}
-    decisions = tuple(post_probe())
+    try:
+        decisions = tuple(post_probe())
+    except Exception as exc:
+        # A probe that raises must not leave the expanded batch live: withdraw it and restore the
+        # previous exposure, exactly as the empty-window case below does.
+        _withdraw(gate, profile, previous, reason="post-batch probe failed")
+        raise ExpansionError(f"the post-batch probe failed: {exc}") from exc
     if not decisions:
         # Nothing was checked, so nothing may be reported as passing: withdraw the new batch and
         # restore the previous exposure rather than claim a clean window.
-        gate.disable(profile, reason="empty post-batch window")
-        if previous is not None:
-            _re_enable(gate, profile, previous)
+        _withdraw(gate, profile, previous, reason="empty post-batch window")
         raise ExpansionError("the post-batch window has no turns to check")
     post = check_after_batch(profile=profile, batch=batch.name, decisions=decisions,
                              foundation_ids=foundation_ids)

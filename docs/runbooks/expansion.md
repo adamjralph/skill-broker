@@ -94,7 +94,9 @@ to admit a batch; a re-derivation is a deliberate corpus milestone (ADR-0019, AD
 The procedure refuses to expand when the profile has an **open Incident** (an Incident no later
 review closed), is failed closed, has expansion blocked by a Soft-Threshold regression, or has no
 running batch to expand from. Recovery from a breach is a review recorded after the breach, not
-another batch.
+another batch. The new batch is only live between its enabling and the post-batch checks: if
+those checks cannot run — an empty window, or the probe itself raising — the batch is withdrawn
+and the previous exposure restored before the procedure refuses.
 
 ## What is recorded
 

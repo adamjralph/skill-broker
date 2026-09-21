@@ -297,6 +297,17 @@ class ExpandTest(ExpansionTestCase):
                    reviewed_at=LATER, registry=self.registry, post_probe=lambda: [])
         self.assertEqual(self.gate.enabled_batch(PROFILE), self.first)
 
+    def test_a_failing_post_batch_probe_restores_the_previous_exposure(self) -> None:
+        def boom():
+            raise RuntimeError("probe exploded")
+
+        with self.assertRaises(ExpansionError):
+            expand(gate=self.gate, report=shadow_report(self.second), reviewer="adam",
+                   reviewed_at=LATER, registry=self.registry, post_probe=boom)
+
+        self.assertEqual(self.gate.enabled_batch(PROFILE), self.first)
+        self.assertTrue(self.gate.injecting(PROFILE))
+
 
 class ExpansionCliTest(unittest.TestCase):
     """The operator path: status, rehearse, and apply over a reviewed report (ticket #58)."""
