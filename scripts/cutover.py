@@ -469,16 +469,18 @@ def _apply(data: dict, baseline: Path, config: Path, store, manifest, farm,
         created = bool(prior.get("created_skills_block"))
         disabled_existed = bool(prior.get("disabled_key_existed", disabled_existed))
         added_disabled = list(prior.get("added_disabled", []))
+        farm_added = bool(prior.get("farm_added", False))
     data["applied"] = {"farm": str(farm),
                        "config_sha256": hashlib.sha256(config.read_text().encode()).hexdigest(),
                        "created_skills_block": created,
                        "disabled_key_existed": disabled_existed,
+                       "farm_added": farm_added,
                        "added_disabled": added_disabled,
                        "resolution": after}
     _write_baseline(baseline, data)
     return {"ok": True, "consumer": data["consumer"], "config": str(config), "farm": str(farm),
             "changed": changed, "exposures": generated["exposures"],
-            "withheld": added_disabled}
+            "withheld": list(withheld)}
 
 
 def _verify(config: Path, store, manifest, farm, policy=None, roots=()) -> dict:
@@ -507,12 +509,17 @@ def _rollback(data: dict, baseline: Path, config: Path) -> dict:
     if applied.get("created_skills_block"):
         updated, changed = remove_created_skills_block(text, applied["farm"], added_disabled)
     else:
-        updated, farm_changed = remove_external_dir(text, applied["farm"])
+        if applied.get("farm_added"):
+            updated, farm_changed = remove_external_dir(text, applied["farm"])
+        else:
+            # A farm that predates this Cutover (an idempotent re-apply) is not ours to remove.
+            updated, farm_changed = text, False
         updated, disabled_changed = remove_added_disabled(
             updated, added_disabled, bool(applied.get("disabled_key_existed")))
         changed = farm_changed or disabled_changed
     if changed:
-        _validate_external(updated, applied["farm"], present=False)
+        if applied.get("created_skills_block") or applied.get("farm_added"):
+            _validate_external(updated, applied["farm"], present=False)
         config.write_text(updated)
     _write_baseline(baseline, data)
     return {"ok": True, "consumer": data["consumer"], "config": str(config), "changed": changed}

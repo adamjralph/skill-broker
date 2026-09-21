@@ -252,6 +252,26 @@ class CutoverTests(unittest.TestCase):
             self.apply()
         self.assertEqual(self.external_dirs(), ["/already/there"])
 
+    def test_rollback_after_an_idempotent_reapply_keeps_a_pre_existing_cutover(self):
+        """A re-apply based on an already-cutover config adds nothing; rollback keeps it."""
+        self.skill(self.store / "one", "brokered", body="store copy")
+        self.skill(self.native, "brokered", body="native copy")
+        sm.generate(self.store)
+        self.exposures(("novel", "one.novel"))
+        policy = self.write_policy([{"id": "one.novel"}], ["one.brokered"])
+        self.run_cutover()
+        self.apply(policy=policy)
+        cutover_bytes = self.config.read_bytes()
+        # A fresh baseline captures the already-cutover config, as a later run would.
+        self.run_cutover()
+        again = self.apply(policy=policy)
+        self.assertFalse(again["changed"])
+        self.assertEqual(again["withheld"], ["brokered"])
+        self.run_cutover("rollback")
+        self.assertEqual(self.config.read_bytes(), cutover_bytes)
+        self.assertEqual(self.disabled(), ["brokered"])
+        self.assertIn(str(self.farm), self.external_dirs())
+
     def test_cross_skill_reference_satisfied_by_the_farm_passes(self):
         self.skill(self.native, "alpha", body='See skill_view("beta") for details.\n')
         beta = self.store / "one" / "beta"
