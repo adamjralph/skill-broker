@@ -149,10 +149,13 @@ The Report review in Phase 6 refuses unless the Soft Thresholds are pre-register
 python3 scripts/corpus.py extract --profile <profile>
 python3 scripts/corpus.py status  --profile <profile> --minimum 20
 
-# for each Case: hand-review the outcome, and freeze the Jev claim the live broker recorded
+# for each Case: hand-review the outcome, and freeze a Jev claim against it
 python3 scripts/corpus.py review --profile <profile> --case <sha> --outcome <skill-id|no_skill>
+# A turn the live broker judged: freeze the recorded Judgment (joined by request hash).
 python3 scripts/corpus.py record --profile <profile> --case <sha> \
     --from-evidence ~/.hermes/skill-broker/route_decisions.jsonl
+# A pre-broker turn it never judged: ask live Jev now and freeze that Choice.
+python3 scripts/corpus.py record --profile <profile> --case <sha> --live
 
 python3 scripts/evaluate.py evaluate --profile <profile> --minimum 20
 python3 scripts/evaluate.py register --profile <profile> --minimum 20
@@ -165,7 +168,9 @@ Notes:
 - `--from-evidence` freezes the validated `judgment` the live broker already recorded in the
   Evidence Log, joined to the Case by the request's content hash. It refuses a Judgment not
   answered by live Jev unless `--any-source` is passed, so a `first_candidate` fallback cannot be
-  frozen as if it were a live call. `--claim <claim.json>` remains for a hand-supplied Choice.
+  frozen as if it were a live call. `--live` is for a Case the broker never judged (a turn from
+  before the plugin was live): it asks live Jev for the Case now, freezes that Choice the same
+  way, and refuses a fallback answer. `--claim <claim.json>` remains for a hand-supplied Choice.
 - Below the minimum the profile correctly stays in Shadow Mode; do not pad from another profile.
 
 ## Phase 6 — build and review the Shadow Report

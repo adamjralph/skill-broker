@@ -37,6 +37,11 @@ python3 scripts/corpus.py review --profile stillroom-signal-generator \
 # hash). Add --any-source only to freeze a non-Jev fallback deliberately.
 python3 scripts/corpus.py record --profile stillroom-signal-generator \
     --case <case_sha256> --from-evidence ~/.hermes/skill-broker/route_decisions.jsonl
+# A Case the broker never judged (a turn from before it was live) is frozen by asking live Jev
+# now. The claim is bound to the Case by content hash exactly as an observed one is; a fallback
+# answer is refused, never frozen as a live Choice.
+python3 scripts/corpus.py record --profile stillroom-signal-generator \
+    --case <case_sha256> --live
 # Or freeze a hand-supplied Jev Choice.
 python3 scripts/corpus.py record --profile stillroom-signal-generator \
     --case <case_sha256> --claim claim.json

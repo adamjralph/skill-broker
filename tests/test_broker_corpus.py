@@ -50,7 +50,7 @@ from broker.corpus import (  # noqa: E402
     sessions_db,
     split_for,
 )
-from broker.judgment import CHOICE_KEYS  # noqa: E402
+from broker.judgment import CHOICE_KEYS, JudgmentCall  # noqa: E402
 from broker.types import Judgment, RouteDecision  # noqa: E402
 from broker_fixture import RecordingEvidenceLog, judgment_claim  # noqa: E402
 from corpus_fixture import add_session, add_turn, make_corpus_fixture  # noqa: E402
@@ -201,6 +201,24 @@ class ExtractionTest(unittest.TestCase):
         report = self.extract()
         self.assertEqual(report.extracted, 1)
         self.assertEqual(report.duplicates, 1)
+
+    def test_re_extraction_backfills_a_missing_request_hash(self) -> None:
+        """A Case from before the request hash existed gains it on re-extraction (ticket #60)."""
+        db = self.fixture.db
+        add_session(db, "cli-1", "cli", profile_name=self.store.profile)
+        add_turn(db, "cli-1", "Please write a post", timestamp=1.0)
+        self.extract()
+        case = self.corpus.cases(self.store.profile)[0]
+        self.assertTrue(case.request_sha256)
+        self.corpus.add(replace(case, request_sha256=""))
+        report = self.extract()
+        self.assertEqual(report.backfilled, 1)
+        self.assertEqual(report.duplicates, 0)
+        self.assertEqual(report.extracted, 0)
+        self.assertEqual(self.corpus.cases(self.store.profile)[0].request_sha256,
+                         digest("Please write a post"))
+        # A further pass has nothing left to backfill: it is a plain duplicate.
+        self.assertEqual(self.extract().duplicates, 1)
 
     def test_a_case_records_provenance_and_the_authorised_closure(self) -> None:
         self.stage()
@@ -659,6 +677,55 @@ class CorpusCliTest(unittest.TestCase):
                 "--recordings", str(self.fixture.recordings)])
         self.assertEqual(code, 1)
         self.assertIn("not live Jev", buffer.getvalue())
+        self.assertFalse(RecordingStore(self.fixture.recordings)
+                         .path(self.store.profile, case.case_sha256).exists())
+
+    def test_record_live_freezes_a_fresh_jev_claim(self) -> None:
+        """A pre-broker Case the broker never judged is frozen from a live Jev call (#60)."""
+        case = self._second_case()
+
+        original = corpus_cli.JevJudgmentSource.judge
+
+        def fake_judge(self, request, candidates):
+            ids = [candidate.id for candidate in candidates]
+            primary = ALIASED.id if ALIASED.id in ids else (ids[0] if ids else None)
+            return JudgmentCall(claim=judgment_claim(ids, primary=primary), source="jev")
+
+        corpus_cli.JevJudgmentSource.judge = fake_judge
+        try:
+            recorded = self.run_cli(
+                "record", "--profile", self.store.profile, "--case", case.case_sha256,
+                "--live", "--store", str(self.store.root), "--corpus", str(self.fixture.corpus),
+                "--recordings", str(self.fixture.recordings))
+        finally:
+            corpus_cli.JevJudgmentSource.judge = original
+        self.assertEqual(recorded["judgment_source"], "jev")
+        self.assertTrue(RecordingStore(self.fixture.recordings)
+                        .path(self.store.profile, case.case_sha256).exists())
+
+    def test_record_live_refuses_a_fallback_source(self) -> None:
+        """A live pass that a fallback answered is not frozen as a live Choice."""
+        case = self._second_case()
+
+        original = corpus_cli.JevJudgmentSource.judge
+
+        def fake_judge(self, request, candidates):
+            ids = [candidate.id for candidate in candidates]
+            primary = ALIASED.id if ALIASED.id in ids else (ids[0] if ids else None)
+            return JudgmentCall(claim=judgment_claim(ids, primary=primary), source="no_skill")
+
+        corpus_cli.JevJudgmentSource.judge = fake_judge
+        buffer = io.StringIO()
+        try:
+            with contextlib.redirect_stdout(buffer):
+                code = corpus_cli.main([
+                    "record", "--profile", self.store.profile, "--case", case.case_sha256,
+                    "--live", "--store", str(self.store.root), "--corpus",
+                    str(self.fixture.corpus), "--recordings", str(self.fixture.recordings)])
+        finally:
+            corpus_cli.JevJudgmentSource.judge = original
+        self.assertEqual(code, 1)
+        self.assertIn("live Jev did not answer", buffer.getvalue())
         self.assertFalse(RecordingStore(self.fixture.recordings)
                          .path(self.store.profile, case.case_sha256).exists())
 

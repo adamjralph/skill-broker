@@ -243,6 +243,8 @@ class ExtractionReport:
     refused: dict[str, int]
     closure_size: int
     corpus: str
+    #: Cases whose missing ``request_sha256`` re-extraction backfilled, not new Cases.
+    backfilled: int = 0
 
     def to_record(self) -> dict:
         return {
@@ -250,6 +252,7 @@ class ExtractionReport:
             "profile": self.profile,
             "extracted": self.extracted,
             "duplicates": self.duplicates,
+            "backfilled": self.backfilled,
             "skipped": self.skipped,
             "skipped_other_profile": self.skipped_other_profile,
             "redactions": self.redactions,
@@ -579,7 +582,7 @@ def extract_cases(
     closure = _authorised_closure(store, profile)
     corpus.record_consent(consent, created_at=timestamp)
 
-    extracted = duplicates = skipped = skipped_other = redactions = 0
+    extracted = duplicates = skipped = skipped_other = redactions = backfilled = 0
     refused: dict[str, int] = {}
     for turn in read_turns(db):
         if not _belongs_to(turn, profile):
@@ -593,8 +596,17 @@ def extract_cases(
             skipped += 1
             continue
         case_sha256 = digest(text)
-        if corpus.get(profile, case_sha256) is not None:
-            duplicates += 1
+        existing = corpus.get(profile, case_sha256)
+        if existing is not None:
+            # A Case extracted before the Request hash was recorded cannot join its Route
+            # Decision, and ``decision_for_case`` tells the operator to re-extract. Backfill the
+            # hash here instead of counting the turn as a plain duplicate, so that instruction
+            # actually works. Case identity and every other recorded field stay untouched.
+            if not existing.request_sha256:
+                corpus.add(replace(existing, request_sha256=digest(turn.content)))
+                backfilled += 1
+            else:
+                duplicates += 1
             continue
         case = Case(
             case_sha256=case_sha256,
@@ -619,6 +631,7 @@ def extract_cases(
         profile=profile,
         extracted=extracted,
         duplicates=duplicates,
+        backfilled=backfilled,
         skipped=skipped,
         skipped_other_profile=skipped_other,
         redactions=redactions,

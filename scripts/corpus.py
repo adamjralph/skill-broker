@@ -10,6 +10,7 @@ to the committed ``corpus/`` tree. Every ``gh``-free, offline operation:
     python3 scripts/corpus.py status  --minimum 20
     python3 scripts/corpus.py review  --profile pilot --case <sha> --outcome local.some-skill
     python3 scripts/corpus.py record  --profile pilot --case <sha> --claim claim.json
+    python3 scripts/corpus.py record  --profile pilot --case <sha> --live
     python3 scripts/corpus.py record  --profile pilot --case <sha> \
         --from-evidence ~/.hermes/skill-broker/route_decisions.jsonl
     python3 scripts/corpus.py purge   --profile pilot --source telegram
@@ -18,9 +19,11 @@ to the committed ``corpus/`` tree. Every ``gh``-free, offline operation:
 ``extract`` refuses any source that has not opted in (ADR-0020): the agent-authored channels are
 consented by default, ``telegram`` and ``desktop`` need an explicit ``--consent``, and an
 unlisted source such as ``kanban`` needs one too. ``review`` writes only a label — never request
-text — and ``record`` freezes a Jev claim against its Case by content hash. ``record`` takes
-either a ``--claim`` file or ``--from-evidence``, which freezes the Judgment the live broker
-already recorded in the Evidence Log (matched to the Case by profile and correlation ids).
+text — and ``record`` freezes a Jev claim against its Case by content hash. ``record`` takes a
+``--claim`` file, ``--live`` (ask live Jev for this Case now — the path for a pre-broker turn the
+broker never judged), or ``--from-evidence``, which freezes the Judgment the live broker already
+recorded in the Evidence Log (matched to the Case by profile, session and request content hash).
+Both live paths refuse a fallback answer, so a No-Skill floor is never frozen as a live Choice.
 ``queue`` writes a machine-local, pre-labelled review queue so hand-review starts from a
 suggestion rather than a bare hash list.
 """
@@ -101,8 +104,13 @@ def _parser() -> argparse.ArgumentParser:
     source.add_argument("--claim", type=Path, help="a JSON Jev Choice")
     source.add_argument("--from-evidence", type=Path,
                         help="an Evidence Log; freeze the Judgment it recorded for this Case")
+    source.add_argument("--live", action="store_true",
+                        help="ask live Jev for this Case now and freeze its Choice; the path "
+                             "for a Case the broker never judged (a pre-broker turn)")
     record.add_argument("--any-source", action="store_true",
                         help="with --from-evidence, allow a Judgment not answered by live Jev")
+    record.add_argument("--store", type=Path, default=Path.home() / "skill-store",
+                        help="the Skill Store to retrieve Candidates from for --live")
     record.add_argument("--corpus", type=Path, default=DEFAULT_CORPUS_ROOT)
     record.add_argument("--recordings", type=Path, default=DEFAULT_RECORDINGS)
 
@@ -189,7 +197,21 @@ def _record(args: argparse.Namespace) -> dict:
     if case is None:
         raise ValueError(f"no case {args.case} for profile {args.profile!r}")
     judgment_source = "claim"
-    if args.from_evidence is not None:
+    if args.live:
+        from broker.broker import Broker
+
+        broker = Broker(store=args.store, evidence_log=_NullEvidence(),
+                        judgment_source=JevJudgmentSource())
+        result = broker.prepare_turn(
+            case.request, args.profile,
+            {"session_id": case.session_id, "turn_id": case.turn_id})
+        judgment_source = result.decision.judgment_source or "none"
+        if judgment_source != JevJudgmentSource.name:
+            raise ValueError(
+                f"live Jev did not answer case {args.case} (source {judgment_source!r}); "
+                "refusing to freeze a fallback as if it were a live Choice")
+        claim = claim_from_decision(result.decision)
+    elif args.from_evidence is not None:
         decision = decision_for_case(
             case, load_route_decisions(args.from_evidence, profile=args.profile))
         judgment_source = decision.judgment_source or "none"
