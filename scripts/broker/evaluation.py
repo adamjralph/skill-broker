@@ -506,9 +506,9 @@ class ThresholdRegistry:
         """Write the pre-registration, or refuse to move an already-registered threshold."""
         if report.below_minimum:
             raise EvaluationError(
-                f"{report.profile} has {report.reviewed_cases} reviewed case(s), below the "
-                f"Stage 5 minimum of {report.minimum}; it stays in Shadow Mode rather than "
-                f"gating on thin data")
+                f"{report.profile} has {report.threshold.cases} threshold-setting reviewed "
+                f"case(s) of {report.reviewed_cases} reviewed, below the Stage 5 minimum of "
+                f"{report.minimum}; it stays in Shadow Mode rather than gating on thin data")
         existing = self.get(report.profile)
         if existing is not None:
             if existing.get("corpus_sha256") == report.corpus_sha256:

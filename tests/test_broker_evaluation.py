@@ -244,6 +244,11 @@ class MetricsTest(EvaluationFixtureTestCase):
         self.assertLess(report.threshold.cases, 20)
         self.assertTrue(report.below_minimum)
         self.assertEqual(report.stage, "shadow")
+        with self.assertRaises(EvaluationError) as caught:
+            ThresholdRegistry(self.fixture.root / "thresholds").register(report)
+        message = str(caught.exception)
+        self.assertIn(f"{report.threshold.cases} threshold-setting reviewed case(s)", message)
+        self.assertIn(f"of {report.reviewed_cases} reviewed", message)
 
     def test_stages_roll_attribution_up_to_retrieval_judgment_and_grant(self) -> None:
         self.stage([{"content": "draft prose one", "outcome": ALIASED.id},
