@@ -150,13 +150,34 @@ def _as_response(payload: Mapping) -> Any:
     return SimpleNamespace(answers=answers, usage=SimpleNamespace(**usage))
 
 
+def _api_key() -> str:
+    """The TypeSafe key: Hermes's per-turn profile secret scope first, then the environment.
+
+    A routed Hermes turn (gateway / desktop / kanban) installs the profile's secrets as a per-turn
+    ``agent.secret_scope`` scope instead of writing them to ``os.environ`` — deliberately, so a
+    subprocess cannot inherit another profile's credentials. Reading only ``os.environ`` therefore
+    misses the key on exactly the routed turns the Shadow window observes, and a bare
+    ``os.environ`` read would silently fall back to No-Skill rather than call Jev. The Hermes
+    module is imported lazily, so an offline Consumer or this repo's suite reads the environment.
+    """
+    try:
+        from agent.secret_scope import get_secret
+    except Exception:  # noqa: BLE001 — outside Hermes there is no scope; the env is the source
+        return os.environ.get(API_KEY_ENV, "").strip()
+    try:
+        value = get_secret(API_KEY_ENV, "")
+    except Exception:  # noqa: BLE001 — a refused scope read is a missing key, never a leak
+        return ""
+    return (value or "").strip()
+
+
 def _http_client(timeout: float) -> _HttpJevClient:
-    """The default live client: the API key from the environment, one bounded HTTP call.
+    """The default live client: the API key from the profile scope, one bounded HTTP call.
 
     Raises :class:`JudgmentError` when the key is unset, so the composed source falls back to its
     Recording and then to No-Skill rather than making an unauthenticated call (ADR-0004).
     """
-    api_key = os.environ.get(API_KEY_ENV, "").strip()
+    api_key = _api_key()
     if not api_key:
         raise JudgmentError(f"{API_KEY_ENV} is not set; a live Jev call needs an API key")
     base_url = os.environ.get(BASE_URL_ENV, "").strip() or DEFAULT_BASE_URL

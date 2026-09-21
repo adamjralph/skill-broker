@@ -15,6 +15,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+import types
 import unittest
 from pathlib import Path
 
@@ -169,6 +170,49 @@ class LiveCallTest(JevSourceTestCase):
         if previous is not None:
             self.addCleanup(os.environ.__setitem__, "TYPESAFE_API_KEY", previous)
 
+        with self.assertRaises(JudgmentError):
+            _http_client(JEV_DEFAULT_TIMEOUT)
+
+    def _fake_secret_scope(self, get_secret):
+        """Install a fake ``agent.secret_scope`` for the duration of one test."""
+        fake_agent = types.ModuleType("agent")
+        fake_scope = types.ModuleType("agent.secret_scope")
+        fake_scope.get_secret = get_secret
+        fake_agent.secret_scope = fake_scope
+        saved = {name: sys.modules.get(name) for name in ("agent", "agent.secret_scope")}
+
+        def restore():
+            for name, module in saved.items():
+                if module is None:
+                    sys.modules.pop(name, None)
+                else:
+                    sys.modules[name] = module
+
+        self.addCleanup(restore)
+        sys.modules["agent"] = fake_agent
+        sys.modules["agent.secret_scope"] = fake_scope
+
+    def test_the_default_client_reads_the_profile_secret_scope(self) -> None:
+        """A routed Hermes turn keeps the key in a per-turn scope, not ``os.environ`` (#60)."""
+        from broker.jev import _api_key
+
+        self._fake_secret_scope(lambda name, default=None: "scoped-key")
+        previous = os.environ.pop("TYPESAFE_API_KEY", None)
+        if previous is not None:
+            self.addCleanup(os.environ.__setitem__, "TYPESAFE_API_KEY", previous)
+        self.assertEqual(_api_key(), "scoped-key")
+
+    def test_a_refused_scope_read_never_falls_back_to_the_environment(self) -> None:
+        """A scope that refuses must not leak the process environment's credential."""
+        from broker.jev import _api_key, _http_client
+
+        def refuse(name, default=None):
+            raise RuntimeError("no profile secret scope active")
+
+        self._fake_secret_scope(refuse)
+        self.addCleanup(os.environ.pop, "TYPESAFE_API_KEY", None)
+        os.environ["TYPESAFE_API_KEY"] = "env-key"
+        self.assertEqual(_api_key(), "")
         with self.assertRaises(JudgmentError):
             _http_client(JEV_DEFAULT_TIMEOUT)
 
