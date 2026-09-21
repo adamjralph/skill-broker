@@ -245,12 +245,83 @@ class CutoverTests(unittest.TestCase):
         self.assertTrue(self.apply()["ok"])
         self.assertEqual(self.external_dirs(), ["/already/there", str(self.farm)])
 
-    def test_cross_skill_reference_must_resolve(self):
+    def test_pre_existing_dangling_reference_does_not_block_a_cutover(self):
+        """A reference already dangling in the baseline is a native defect, not a regression
+        (ADR-0025); the Cutover is additive and cannot have broken it."""
         self.skill(self.native, "alpha", body='See skill_view("beta") for details.\n')
+        store_writing = self.store / "one" / "writing"
+        store_writing.mkdir(parents=True)
+        (store_writing / "SKILL.md").write_bytes((self.writing / "SKILL.md").read_bytes())
+        sm.generate(self.store)
+        self.exposures(("writing", "one.writing"))
         self.run_cutover()
-        with self.assertRaisesRegex(co.CutoverError, "unresolved reference: alpha -> beta"):
+        self.assertTrue(self.apply()["ok"])
+        data = json.loads(self.baseline.read_text())
+        self.assertEqual(data["applied"]["resolution"], data["resolution"])
+
+    def test_newly_dangling_reference_still_fails_the_gate(self):
+        """A Skill the farm newly exposes may not reference a missing Skill."""
+        beta = self.store / "one" / "beta"
+        beta.mkdir(parents=True)
+        (beta / "SKILL.md").write_text('---\nname: beta\n---\nSee skill_view("ghost").\n')
+        sm.generate(self.store)
+        self.exposures(("beta", "one.beta"))
+        self.run_cutover()
+        with self.assertRaisesRegex(co.CutoverError, "unresolved reference: beta -> ghost"):
             self.apply()
         self.assertEqual(self.external_dirs(), ["/already/there"])
+
+    def test_baseline_resolution_honours_disabled_and_records_it(self):
+        self.config.write_text(
+            "skills:\n  external_dirs:\n    - /already/there\n  disabled:\n    - writing\n")
+        self.run_cutover()
+        data = json.loads(self.baseline.read_text())
+        self.assertEqual(data["config"]["disabled"], ["writing"])
+        self.assertNotIn("writing", data["resolution"])
+
+    def test_baseline_folds_external_dirs_into_the_effective_roots(self):
+        shared = self.root / "shared"
+        self.skill(shared, "shared-skill")
+        self.config.write_text(f"skills:\n  external_dirs:\n    - {shared}\n")
+        self.run_cutover()
+        data = json.loads(self.baseline.read_text())
+        self.assertIn(str(shared), data["roots"])
+        self.assertIn("shared-skill", data["resolution"])
+
+    def test_reference_into_an_external_dir_resolves(self):
+        """A cutover-root Skill may reference a Skill that resolves from an external directory."""
+        shared = self.root / "shared"
+        self.skill(shared, "ask-matt")
+        self.skill(self.native, "alpha", body='See skill_view("ask-matt") for details.\n')
+        self.config.write_text(
+            f"skills:\n  external_dirs:\n    - /already/there\n    - {shared}\n")
+        self.run_cutover()
+        self.assertTrue(self.apply()["ok"])
+
+    def test_verify_exempts_a_baseline_dangling_reference(self):
+        """verify must reload the baseline so its reference exemption matches apply."""
+        self.skill(self.native, "alpha", body='See skill_view("beta") for details.\n')
+        foundation = self.skill(self.store / "one", "foundation")
+        sm.generate(self.store)
+        self.exposures(("novel", "one.novel"), ("foundation", "one.foundation"))
+        policy = self.write_policy([{"id": "one.foundation"}])
+        self.run_cutover()
+        self.apply(policy=policy)
+        self.assertTrue(self.run_cutover("verify", store=self.store, manifest=self.manifest,
+                                         farm=self.farm, policy=policy)["ok"])
+
+    def test_verify_uses_the_recorded_baseline_roots(self):
+        """verify without --roots must re-derive the effective roots from the baseline."""
+        foundation = self.skill(self.store / "one", "foundation")
+        sm.generate(self.store)
+        self.exposures(("novel", "one.novel"), ("foundation", "one.foundation"))
+        policy = self.write_policy([{"id": "one.foundation"},
+                                    {"project": "/p", "name": "writing"}])
+        self.run_cutover()
+        self.apply(policy=policy)
+        self.assertTrue(self.run_cutover("verify", roots=(), store=self.store,
+                                         manifest=self.manifest, farm=self.farm,
+                                         policy=policy)["ok"])
 
     def test_rollback_after_an_idempotent_reapply_keeps_a_pre_existing_cutover(self):
         """A re-apply based on an already-cutover config adds nothing; rollback keeps it."""

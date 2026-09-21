@@ -18,7 +18,19 @@ implements wayfinder #11 section 6.  Without a policy it covers the policy-free 
 2. every farm link resolves into the store;
 3. each exposure resolves to the canonical ``package_sha256``;
 4. no name that resolved before Cutover stops resolving (zero regressions);
-5. every cross-skill reference in the resolving set resolves.
+5. no cross-skill reference is left unresolved by the Cutover. A reference that was already
+   dangling in the recorded baseline is a pre-existing native defect, not a Cutover regression
+   (ADR-0025), so it is exempt; a reference a newly-exposed Skill leaves dangling still fails
+   closed.
+
+The baseline records the Consumer's **effective exposure**, not a single filesystem walk: the
+Cutover roots given on the command line plus the config's pre-existing ``skills.external_dirs``
+(the Consumer's other native skill roots), minus every Name in ``skills.disabled``. Modelling the
+extra roots and the disabled list makes the baseline agree with the automatic index the gate
+checks, so a policy authored from the baseline resolves and references into an external directory
+(for example ``ask-matt`` in ``~/.agents/skills``) are seen. The extra directories stay native —
+nothing is wired or brokered from them — and a Foundation Set may list or omit them as the
+operator decides (ADR-0025).
 
 With ``--policy PATH`` - an authored ``<store>/policies/<profile>.json`` (ADR-0018) - the gate
 first validates the policy against the verified Store Manifest via ``scripts/profile_policy.py``
@@ -44,14 +56,16 @@ Usage::
     python3 scripts/cutover.py apply    --store DIR --manifest PATH --farm DIR \\
         --config PATH --baseline PATH [--policy PATH]
     python3 scripts/cutover.py verify   --store DIR --manifest PATH --farm DIR --config PATH \\
-        [--policy PATH] [--roots DIR ...]
+        [--policy PATH] [--roots DIR ...] [--baseline PATH]
     python3 scripts/cutover.py rollback --config PATH --baseline PATH
 
 Reversible implementation defaults: the baseline is a machine-local JSON file under
 ``~/.config/skill-broker/baselines/`` and is uncommitted; baseline is read-only; apply requires
 an existing baseline so rollback is always possible; a failed apply leaves the previous config
 and farm intact.  Rollback restores resolution (the config edit) only and never deletes Skill
-content; it leaves a generated farm in place.
+content; it leaves a generated farm in place.  ``verify`` re-runs the policy gate and, when a
+baseline is available (an explicit ``--baseline`` or the ``--consumer`` default), reloads the
+recorded before map and effective roots so its checks match ``apply``.
 """
 from __future__ import annotations
 
@@ -99,8 +113,13 @@ def _skill_dirs(root: Path) -> list[Path]:
     return found
 
 
-def resolution(roots) -> dict:
-    """First-root-wins ``{name: {realpath, package_sha256}}`` over the given Skill roots."""
+def resolution(roots, disabled=()) -> dict:
+    """First-root-wins ``{name: {realpath, package_sha256}}`` over the given Skill roots.
+
+    ``disabled`` Names are withheld from the result: this is the effective exposure Hermes
+    builds its automatic index from (``skills.disabled``), not a raw directory walk (ADR-0025).
+    """
+    withheld = set(disabled)
     resolved: dict[str, dict] = {}
     for root in roots:
         root = Path(root).expanduser()
@@ -108,7 +127,7 @@ def resolution(roots) -> dict:
             continue
         for skill_dir in _skill_dirs(root):
             name = frontmatter_name(skill_dir / "SKILL.md") or skill_dir.name
-            if name in resolved:
+            if name in withheld or name in resolved:
                 continue
             package_sha256, _, _, _ = hash_package(skill_dir)
             resolved[name] = {"realpath": str(skill_dir.resolve()),
@@ -132,13 +151,34 @@ def _disabled_names(text: str) -> list[str]:
     return _skills_list(text, "disabled")
 
 
+def _effective_roots(roots, text: str) -> list[str]:
+    """The Cutover roots plus the config's pre-existing ``external_dirs`` (its native roots)."""
+    out: list[str] = []
+    for root in roots:
+        path = str(Path(root).expanduser())
+        if path not in out:
+            out.append(path)
+    for directory in _external_dirs(text):
+        if directory not in out:
+            out.append(directory)
+    return out
+
+
+def _recorded_disabled(data: dict) -> list[str] | None:
+    """The pre-Cutover ``skills.disabled`` a baseline recorded, or ``None`` for an older one."""
+    return (data.get("config") or {}).get("disabled")
+
+
 def _baseline(config: Path, consumer: str, roots) -> dict:
     text = config.read_text()
+    roots = _effective_roots(roots, text)
+    disabled = _disabled_names(text)
+    resolved = resolution(roots, disabled)
     return {"baseline_version": BASELINE_VERSION, "generator": GENERATOR, "consumer": consumer,
             "config": {"path": str(config), "sha256": hashlib.sha256(text.encode()).hexdigest(),
-                       "external_dirs": _external_dirs(text)},
-            "roots": [str(Path(r).expanduser()) for r in roots],
-            "resolution": {name: dict(row) for name, row in sorted(resolution(roots).items())}}
+                       "external_dirs": _external_dirs(text), "disabled": disabled},
+            "roots": roots,
+            "resolution": {name: dict(row) for name, row in sorted(resolved.items())}}
 
 
 def _write_baseline(path: Path, data: dict) -> None:
@@ -410,17 +450,34 @@ def _policy_problems(policy: dict, identities: dict, store: Path, after: dict,
     return problems
 
 
-def _gate(before: dict, roots, farm: Path, policy: dict | None = None,
-          identities: dict | None = None, store: Path | None = None,
-          withheld=()) -> tuple[list[str], dict]:
-    """wayfinder #11 section 6 checks, policy-free plus (when given) the policy conditions."""
-    after = resolution([*roots, farm])
-    problems = [f"regression: {name} no longer resolves" for name in sorted(before)
-                if name not in after]
+def _unresolved_references(before: dict, after: dict) -> list[str]:
+    """References the Cutover leaves unresolved, exempting ones already dangling in the baseline.
+
+    A Cutover is additive: it can break a reference only where one resolved before, so a
+    reference that was already dangling is a pre-existing native defect the baseline records,
+    not a Cutover regression (ADR-0025). A reference a newly-exposed Skill leaves dangling is
+    still a problem.
+    """
+    baseline_dangling = {(name, target)
+                         for name, row in before.items()
+                         for target in references(Path(row["realpath"]))
+                         if target not in before}
+    problems: list[str] = []
     for name, row in sorted(after.items()):
         for target in references(Path(row["realpath"])):
-            if target not in after:
+            if target not in after and (name, target) not in baseline_dangling:
                 problems.append(f"unresolved reference: {name} -> {target}")
+    return problems
+
+
+def _gate(before: dict, roots, farm: Path, policy: dict | None = None,
+          identities: dict | None = None, store: Path | None = None,
+          withheld=(), disabled=()) -> tuple[list[str], dict]:
+    """wayfinder #11 section 6 checks, policy-free plus (when given) the policy conditions."""
+    after = resolution([*roots, farm], disabled)
+    problems = [f"regression: {name} no longer resolves" for name in sorted(before)
+                if name not in after]
+    problems.extend(_unresolved_references(before, after))
     if policy is not None:
         problems.extend(_policy_problems(policy, identities, store, after, withheld=withheld))
     return problems, after
@@ -448,11 +505,17 @@ def _apply(data: dict, baseline: Path, config: Path, store, manifest, farm,
     ef.run("verify", store, manifest, farm)
     text = config.read_text()
     # The gate is checked against the index that will result: existing disabled Names plus
-    # the Brokered Names this Cutover is about to withhold (ADR-0021).
-    effective_disabled = list(dict.fromkeys([*_disabled_names(text), *withheld]))
+    # the Brokered Names this Cutover is about to withhold (ADR-0021).  ``disabled`` restricts
+    # the resolution map (the effective exposure); ``withheld`` restricts the policy's index.
+    # The baseline's disabled list is the pre-Cutover one; the live config may already carry
+    # this Cutover's withheld Names on an idempotent re-apply.
+    recorded_disabled = _recorded_disabled(data)
+    pre_existing_disabled = (list(recorded_disabled) if recorded_disabled is not None
+                             else _disabled_names(text))
+    effective_disabled = list(dict.fromkeys([*pre_existing_disabled, *withheld]))
     problems, after = _gate(data["resolution"], data["roots"], farm,
                             policy=policy_data, identities=identities, store=store,
-                            withheld=effective_disabled)
+                            withheld=effective_disabled, disabled=pre_existing_disabled)
     if problems:
         raise CutoverError("; ".join(problems))
     created = not _has_skills_block(text)
@@ -483,15 +546,25 @@ def _apply(data: dict, baseline: Path, config: Path, store, manifest, farm,
             "withheld": list(withheld)}
 
 
-def _verify(config: Path, store, manifest, farm, policy=None, roots=()) -> dict:
+def _verify(config: Path, store, manifest, farm, policy=None, roots=(), baseline=None) -> dict:
     store, manifest, farm = _plan_inputs(store, manifest, farm)
     result = ef.run("verify", store, manifest, farm)
-    if str(farm) not in _external_dirs(config.read_text()):
+    text = config.read_text()
+    if str(farm) not in _external_dirs(text):
         raise CutoverError(f"config does not list the farm in skills.external_dirs: {farm}")
     if policy is not None:
         policy_data, identities = _policy_inputs(store, policy)
-        problems, _ = _gate({}, roots, farm, policy=policy_data, identities=identities,
-                            store=store, withheld=_disabled_names(config.read_text()))
+        before: dict = {}
+        disabled: list[str] = []
+        verify_roots = _effective_roots(roots, text)
+        if baseline is not None and Path(baseline).expanduser().is_file():
+            recorded = _read_baseline(Path(baseline).expanduser())
+            before = recorded["resolution"]
+            disabled = list(_recorded_disabled(recorded) or [])
+            verify_roots = _effective_roots(recorded["roots"], text)
+        problems, _ = _gate(before, verify_roots, farm,
+                            policy=policy_data, identities=identities, store=store,
+                            withheld=_disabled_names(text), disabled=disabled)
         if problems:
             raise CutoverError("; ".join(problems))
     return {"ok": True, "consumer": result["consumer"], "config": str(config),
@@ -533,7 +606,8 @@ def run(command: str, *, config: Path, baseline: Path | None = None, consumer: s
         raise CutoverError(f"unknown command: {command}")
     config = Path(config).expanduser()
     if command == "verify":
-        return _verify(config, store, manifest, farm, policy=policy, roots=roots)
+        return _verify(config, store, manifest, farm, policy=policy, roots=roots,
+                       baseline=baseline)
     if baseline is None:
         raise CutoverError(f"--baseline is required for {command}")
     baseline = Path(baseline).expanduser()
@@ -566,12 +640,9 @@ def main(argv: list[str] | None = None) -> int:
                         help="Profile Policy (<store>/policies/<profile>.json); adds items 4-5")
     args = parser.parse_args(argv)
     baseline = args.baseline
-    if baseline is None:
-        if args.command == "verify":
-            baseline = Path("unused")
-        elif args.consumer:
-            baseline = (Path.home() / ".config" / "skill-broker" / "baselines"
-                        / f"{args.consumer}.json")
+    if baseline is None and args.consumer:
+        baseline = (Path.home() / ".config" / "skill-broker" / "baselines"
+                    / f"{args.consumer}.json")
     try:
         result = run(args.command, config=args.config, baseline=baseline,
                      consumer=args.consumer, roots=args.roots, store=args.store,

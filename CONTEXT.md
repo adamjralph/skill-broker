@@ -99,7 +99,8 @@ _Avoid_: catalog file, index file
 
 **Cutover**:
 The repointing of one Consumer's skill resolution from its existing exposures to its
-generated Exposure Farm. Performed one Consumer at a time, behind a verification gate, and
+generated Exposure Farm. The recorded baseline is the Consumer's Effective Exposure, not the profile's own skill
+root alone. Performed one Consumer at a time, behind a verification gate, and
 reversible.
 _Avoid_: switch, flip, replacement
 
@@ -125,6 +126,12 @@ _Avoid_: client, application
 A path by which a Skill is reachable by a Consumer. One Skill may have many Exposures and one
 Canonical Source.
 _Avoid_: copy, instance, location
+
+**Effective Exposure**:
+The set of Skills a Consumer's loader actually resolves to: its own skill root plus every
+directory wired in `skills.external_dirs`, minus every Name in `skills.disabled`. The Cutover
+baseline records it so the gate and the Profile Policy agree with the automatic index.
+_Avoid_: filesystem walk, raw resolution
 
 **Exposure Farm**:
 The generated set of symlinks that gives one Consumer its Exposures, linking Exposure names
