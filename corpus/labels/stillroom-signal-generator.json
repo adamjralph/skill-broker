@@ -75,6 +75,12 @@
       "reviewer": "adam"
     },
     {
+      "case_sha256": "7e92421a7531b68332207d64edead6df0ecdf83f50bfd5e361bf0a340c6986ed",
+      "outcome": "coreyhaines31.cold-email",
+      "reviewed_at": "2026-09-21T05:39:22+00:00",
+      "reviewer": "adam"
+    },
+    {
       "case_sha256": "86b7da2386e5bf8d168abb9fdc04fbaac5607f8f2502f1e8505fa62a81c70e25",
       "outcome": "no_skill",
       "reviewed_at": "2026-09-21T05:00:05+00:00",
