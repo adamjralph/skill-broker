@@ -10,13 +10,18 @@ fog. It enforces a timeout well under Hermes's hook-callback timeout (30s defaul
 anything unusable, so the Adapter can compose it with a recorded fallback and a No-Skill floor
 rather than letting a model outage block a turn (ADR-0004, ``FallbackJudgmentSource``).
 
-The TypeSafe SDK is imported lazily: the broker's suites and a Consumer without the SDK still
-run, and only an actual live call needs it.
+The live client is a direct, single-attempt HTTP call to TypeSafe System One — no SDK dependency —
+so the Hermes runtime needs no package a venv rebuild would prune. The seam (``client_factory``)
+stays injectable, so the suites and an offline Consumer never make a network call.
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+import json
+import os
+import urllib.request
+from collections.abc import Callable, Mapping, Sequence
+from types import SimpleNamespace
 from typing import Any
 
 from .judgment import (
@@ -32,6 +37,11 @@ from .types import Candidate
 
 DEFAULT_MODEL = "jev-latest"
 DEFAULT_TIMEOUT = 8.0
+#: TypeSafe's API root; ``TYPESAFE_BASE_URL`` overrides it.
+DEFAULT_BASE_URL = "https://api.typesafe.ai"
+SYSTEM_ONE_PATH = "/v1/systemone"
+API_KEY_ENV = "TYPESAFE_API_KEY"
+BASE_URL_ENV = "TYPESAFE_BASE_URL"
 QUESTION = "primary"
 _INSTRUCTIONS = (
     "Select the single Skill whose guidance is warranted for the request. "
@@ -54,7 +64,7 @@ class JevJudgmentSource:
     ) -> None:
         self._model = model
         self._timeout = timeout
-        self._client_factory = client_factory or _typesafe_client
+        self._client_factory = client_factory or _http_client
 
     def judge(self, request: str, candidates: Sequence[Candidate]) -> JudgmentCall:
         """Ask Jev one Choice and convert the answer into a validated-path claim."""
@@ -103,12 +113,54 @@ def _answer(response: Any) -> Any:
     return answer
 
 
-def _typesafe_client(timeout: float) -> Any:
-    from typesafe_sdk import RetryPolicy, TypeSafeClient  # only a live call needs the SDK
+class _HttpJevClient:
+    """A minimal TypeSafe System One client: one bounded POST, no SDK dependency.
 
-    # Exactly one attempt: the SDK's default policy retries twice inside a 30s budget, which
-    # would put a live call at Hermes's hook-callback timeout instead of well under it.
-    return TypeSafeClient(timeout=timeout, retry=RetryPolicy(max_retries=0, timeout=timeout))
+    A direct call keeps the Hermes runtime free of an extra package a venv rebuild would prune
+    (``uv sync --locked``), while the seam (``client_factory``) stays injectable for tests. The
+    response is adapted to the same attribute shape the SDK returns, so :meth:`JevJudgmentSource.judge`
+    treats every client identically.
+    """
+
+    def __init__(self, *, api_key: str, base_url: str = DEFAULT_BASE_URL, timeout: float,
+                 opener: Callable[..., Any] | None = None) -> None:
+        self._api_key = api_key
+        self._base_url = base_url.rstrip("/")
+        self._timeout = timeout
+        self._opener = opener or urllib.request.urlopen
+
+    def system_one(self, *, state: str, questions: Mapping, model: str) -> Any:
+        body = json.dumps({"state": state, "model": model, "questions": questions}).encode("utf-8")
+        request = urllib.request.Request(
+            f"{self._base_url}{SYSTEM_ONE_PATH}", data=body, method="POST",
+            headers={"Authorization": f"Bearer {self._api_key}",
+                     "Content-Type": "application/json", "Accept": "application/json"})
+        with self._opener(request, timeout=self._timeout) as response:
+            return _as_response(json.loads(response.read().decode("utf-8")))
+
+    def close(self) -> None:
+        return None
+
+
+def _as_response(payload: Mapping) -> Any:
+    """Adapt the wire JSON to the SDK's ``.answers``/``.usage`` attribute shape."""
+    answers = {str(name): SimpleNamespace(**value)
+               for name, value in (payload.get("answers") or {}).items()}
+    usage = payload.get("usage") or {}
+    return SimpleNamespace(answers=answers, usage=SimpleNamespace(**usage))
+
+
+def _http_client(timeout: float) -> _HttpJevClient:
+    """The default live client: the API key from the environment, one bounded HTTP call.
+
+    Raises :class:`JudgmentError` when the key is unset, so the composed source falls back to its
+    Recording and then to No-Skill rather than making an unauthenticated call (ADR-0004).
+    """
+    api_key = os.environ.get(API_KEY_ENV, "").strip()
+    if not api_key:
+        raise JudgmentError(f"{API_KEY_ENV} is not set; a live Jev call needs an API key")
+    base_url = os.environ.get(BASE_URL_ENV, "").strip() or DEFAULT_BASE_URL
+    return _HttpJevClient(api_key=api_key, base_url=base_url, timeout=timeout)
 
 
 def live_judgment_source(

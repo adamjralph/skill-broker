@@ -12,8 +12,9 @@ Run from the repo root: ``python3 -m unittest discover -s tests``.
 
 from __future__ import annotations
 
+import json
+import os
 import sys
-import types
 import unittest
 from pathlib import Path
 
@@ -28,7 +29,7 @@ from broker import (  # noqa: E402
     TurnOutcome,
     live_judgment_source,
 )
-from broker.judgment import NO_SKILL  # noqa: E402
+from broker.judgment import NO_SKILL, JudgmentError  # noqa: E402
 from broker_fixture import RecordingEvidenceLog, judgment_claim  # noqa: E402
 from store_fixture import ALIASED, DISTINCT, StoreFixtureTestCase  # noqa: E402
 
@@ -161,28 +162,57 @@ class LiveCallTest(JevSourceTestCase):
         self.assertGreater(JEV_DEFAULT_TIMEOUT, 0.0)
         self.assertLess(JEV_DEFAULT_TIMEOUT, HOOK_CALLBACK_TIMEOUT)
 
-    def test_the_default_client_disables_retries_and_bounds_the_call(self) -> None:
-        from broker.jev import _typesafe_client
+    def test_the_default_client_needs_an_api_key(self) -> None:
+        from broker.jev import _http_client
 
-        class FakeRetryPolicy:
-            def __init__(self, **kwargs):
-                self.kwargs = kwargs
+        previous = os.environ.pop("TYPESAFE_API_KEY", None)
+        if previous is not None:
+            self.addCleanup(os.environ.__setitem__, "TYPESAFE_API_KEY", previous)
 
-        class FakeTypeSafeClient:
-            def __init__(self, **kwargs):
-                self.kwargs = kwargs
+        with self.assertRaises(JudgmentError):
+            _http_client(JEV_DEFAULT_TIMEOUT)
 
-        fake = types.ModuleType("typesafe_sdk")
-        fake.RetryPolicy = FakeRetryPolicy
-        fake.TypeSafeClient = FakeTypeSafeClient
-        sys.modules["typesafe_sdk"] = fake
-        self.addCleanup(sys.modules.pop, "typesafe_sdk", None)
+    def test_the_http_client_posts_one_bounded_request(self) -> None:
+        from broker.jev import _HttpJevClient
 
-        client = _typesafe_client(JEV_DEFAULT_TIMEOUT)
+        seen: dict[str, object] = {}
 
-        self.assertEqual(client.kwargs["timeout"], JEV_DEFAULT_TIMEOUT)
-        self.assertEqual(client.kwargs["retry"].kwargs,
-                         {"max_retries": 0, "timeout": JEV_DEFAULT_TIMEOUT})
+        class FakeResponse:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+            def read(self) -> bytes:
+                return json.dumps({
+                    "model": "jev-latest",
+                    "usage": {"input_tokens": 5, "output_tokens": 6},
+                    "answers": {"primary": {"type": "choice", "choice": ALIASED.id,
+                                             "confidence": 0.9,
+                                             "probabilities": {ALIASED.id: 0.9}}},
+                }).encode("utf-8")
+
+        def opener(request, timeout):
+            seen["url"] = request.full_url
+            seen["auth"] = request.get_header("Authorization")
+            seen["timeout"] = timeout
+            seen["body"] = json.loads(request.data.decode("utf-8"))
+            return FakeResponse()
+
+        client = _HttpJevClient(api_key="secret", timeout=JEV_DEFAULT_TIMEOUT, opener=opener)
+        response = client.system_one(state=REQUEST, model="jev-latest",
+                                     questions={"primary": {"type": "choice", "criteria": {}}})
+
+        self.assertEqual(seen["url"], "https://api.typesafe.ai/v1/systemone")
+        self.assertEqual(seen["auth"], "Bearer secret")
+        self.assertEqual(seen["timeout"], JEV_DEFAULT_TIMEOUT)
+        self.assertGreater(JEV_DEFAULT_TIMEOUT, 0.0)
+        self.assertLess(JEV_DEFAULT_TIMEOUT, HOOK_CALLBACK_TIMEOUT)
+        self.assertEqual(seen["body"]["state"], REQUEST)
+        self.assertEqual(seen["body"]["questions"]["primary"]["type"], "choice")
+        self.assertEqual(response.answers["primary"].choice, ALIASED.id)
+        self.assertEqual(response.usage.input_tokens, 5)
 
 
 class FallbackTest(JevSourceTestCase):
