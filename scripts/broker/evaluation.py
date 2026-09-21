@@ -109,15 +109,6 @@ def attribute(*, failed: bool, ground_truth: str | None, selected: str | None,
     return GRANT_MISS
 
 
-#: The stored integer fields of :class:`SplitMetrics`, named once for ``from_record``.
-_SPLIT_METRIC_FIELDS = (
-    "cases", "granted", "no_skill", "failures", "true_positive", "false_positive",
-    "false_negative", "true_negative", "grants", "unauthorised_grants", "closure_failures",
-    "dependency_failures", "cycle_failures", "candidate_total", "pack_deliveries",
-    "pack_chars_total", "duplicate_suppressions", "hash_agreements", "hash_disagreements",
-)
-
-
 def _rate(numerator: int, denominator: int) -> float | None:
     """A rounded rate, or ``None`` when the denominator is zero (undefined, not zero)."""
     return None if denominator == 0 else round(numerator / denominator, 6)
@@ -179,33 +170,21 @@ class SplitMetrics:
         return _rate(self.hash_agreements, self.grants)
 
     def to_record(self) -> dict:
-        return {
-            "cases": self.cases,
-            "granted": self.granted,
-            "no_skill": self.no_skill,
-            "failures": self.failures,
-            "true_positive": self.true_positive,
-            "false_positive": self.false_positive,
-            "false_negative": self.false_negative,
-            "true_negative": self.true_negative,
-            "precision": self.precision,
-            "recall": self.recall,
-            "correct_no_skill_rate": self.correct_no_skill_rate,
-            "grants": self.grants,
-            "unauthorised_grants": self.unauthorised_grants,
-            "unauthorised_grant_rate": self.unauthorised_grant_rate,
-            "closure_failures": self.closure_failures,
-            "dependency_failures": self.dependency_failures,
-            "cycle_failures": self.cycle_failures,
-            "average_candidates": self.average_candidates,
-            "pack_deliveries": self.pack_deliveries,
-            "average_pack_chars": self.average_pack_chars,
-            "duplicate_suppressions": self.duplicate_suppressions,
-            "duplicate_injection_rate": self.duplicate_injection_rate,
-            "hash_agreements": self.hash_agreements,
-            "hash_disagreements": self.hash_disagreements,
-            "hash_agreement_rate": self.hash_agreement_rate,
-        }
+        # The dataclass fields are the one field list for the stored counts; the rates are
+        # derived. Deriving the counts means a new metric cannot be silently dropped from the
+        # record (and so from a report's digest).
+        record = {field.name: getattr(self, field.name) for field in fields(self)}
+        record.update(
+            precision=self.precision,
+            recall=self.recall,
+            correct_no_skill_rate=self.correct_no_skill_rate,
+            unauthorised_grant_rate=self.unauthorised_grant_rate,
+            duplicate_injection_rate=self.duplicate_injection_rate,
+            average_candidates=self.average_candidates,
+            average_pack_chars=self.average_pack_chars,
+            hash_agreement_rate=self.hash_agreement_rate,
+        )
+        return record
 
     @classmethod
     def from_record(cls, record: Mapping) -> "SplitMetrics":

@@ -404,8 +404,16 @@ class StoreTest(ReportTestCase):
 
     def setUp(self) -> None:
         super().setUp()
-        self.record(turns=())
+        # A granted turn gives non-zero candidate and pack-char totals in its Route Decision,
+        # so the round-trip cannot pass vacuously on an all-zero record. The observed call
+        # makes the grant a true positive, keeping the thresholds un-regressed.
+        add_session(self.fixture.db, "s1", "cli", profile_name=self.profile, started_at=0.0)
+        turn = add_turn(self.fixture.db, "s1", REVIEW_REQUEST, timestamp=100.0)
+        add_skill_call(self.fixture.db, "s1", ALIASED.name, timestamp=110.0)
+        self.record(turns=(str(turn),))
         self.report = self.build(thresholds={"thresholds": {"precision": 0.5}})
+        self.assertGreater(self.report.metrics.candidate_total, 0)
+        self.assertGreater(self.report.metrics.pack_chars_total, 0)
 
     def test_a_report_round_trips_and_keeps_its_digest(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
