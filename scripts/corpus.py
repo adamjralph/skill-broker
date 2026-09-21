@@ -13,6 +13,7 @@ to the committed ``corpus/`` tree. Every ``gh``-free, offline operation:
     python3 scripts/corpus.py record  --profile pilot --case <sha> \
         --from-evidence ~/.hermes/skill-broker/route_decisions.jsonl
     python3 scripts/corpus.py purge   --profile pilot --source telegram
+    python3 scripts/corpus.py queue   --profile pilot --write-prelabels
 
 ``extract`` refuses any source that has not opted in (ADR-0020): the agent-authored channels are
 consented by default, ``telegram`` and ``desktop`` need an explicit ``--consent``, and an
@@ -20,6 +21,8 @@ unlisted source such as ``kanban`` needs one too. ``review`` writes only a label
 text — and ``record`` freezes a Jev claim against its Case by content hash. ``record`` takes
 either a ``--claim`` file or ``--from-evidence``, which freezes the Judgment the live broker
 already recorded in the Evidence Log (matched to the Case by profile and correlation ids).
+``queue`` writes a machine-local, pre-labelled review queue so hand-review starts from a
+suggestion rather than a bare hash list.
 """
 from __future__ import annotations
 
@@ -103,6 +106,16 @@ def _parser() -> argparse.ArgumentParser:
     record.add_argument("--corpus", type=Path, default=DEFAULT_CORPUS_ROOT)
     record.add_argument("--recordings", type=Path, default=DEFAULT_RECORDINGS)
 
+    queue = sub.add_parser(
+        "queue", help="write a machine-local review queue with a suggested outcome per Case")
+    queue.add_argument("--profile", required=True)
+    queue.add_argument("--store", type=Path, default=Path.home() / "skill-store")
+    queue.add_argument("--corpus", type=Path, default=DEFAULT_CORPUS_ROOT)
+    queue.add_argument("--judgment", choices=("live", "first_candidate", "no_skill"),
+                       default="live", help="the suggestion source (default: live Jev)")
+    queue.add_argument("--write-prelabels", action="store_true",
+                       help="also store each suggestion on its Case as the prelabel")
+
     purge = sub.add_parser("purge", help="delete raw request text on request")
     purge.add_argument("--profile", required=True)
     purge.add_argument("--corpus", type=Path, default=DEFAULT_CORPUS_ROOT)
@@ -126,6 +139,8 @@ def _run(args: argparse.Namespace) -> dict:
         return _prelabel(args)
     if args.command == "record":
         return _record(args)
+    if args.command == "queue":
+        return _queue(args)
     return _purge(args)
 
 
@@ -187,6 +202,98 @@ def _record(args: argparse.Namespace) -> dict:
         claim = json.loads(args.claim.read_text(encoding="utf-8"))
     recording = RecordingStore(args.recordings).write(case, claim)
     return {"ok": True, "judgment_source": judgment_source, "recording": recording.to_record()}
+
+
+def _queue(args: argparse.Namespace) -> dict:
+    """Write a machine-local review queue: one row per Case with a suggested outcome.
+
+    The suggestion is the Judgment Source's primary Skill (or ``no_skill``), so Adam reviews
+    pre-labelled Cases rather than a bare hash list. Request text stays machine-local: the queue
+    is written under the corpus root, never the repository. The broker's own outcome is shown
+    alongside, so a policy denial or a ``judgment_source_error`` is visible at review time.
+    """
+    from broker.broker import Broker
+    from broker.judgment import NO_SKILL, FallbackJudgmentSource, FirstCandidateJudgmentSource
+
+    corpus = CorpusStore(args.corpus)
+    cases = corpus.cases(args.profile)
+    if not cases:
+        raise ValueError(f"no Cases for profile {args.profile!r}; extract first")
+    if args.judgment == "live":
+        source = JevJudgmentSource()
+    elif args.judgment == "first_candidate":
+        source = FirstCandidateJudgmentSource()
+    else:
+        source = FallbackJudgmentSource()  # no sources: always the No-Skill floor
+    broker = Broker(store=args.store, evidence_log=_NullEvidence(), judgment_source=source)
+
+    rows: list[dict] = []
+    suggestions: dict[str, int] = {}
+    for case in sorted(cases, key=lambda entry: (entry.started_at, entry.case_sha256)):
+        result = broker.prepare_turn(
+            case.request, args.profile,
+            {"session_id": case.session_id, "turn_id": case.turn_id})
+        decision = result.decision
+        primary = decision.judgment.primary if decision.judgment is not None else None
+        suggestion = primary or NO_SKILL
+        if args.write_prelabels:
+            corpus.set_prelabel(args.profile, case.case_sha256, suggestion)
+        suggestions[suggestion] = suggestions.get(suggestion, 0) + 1
+        rows.append({
+            "case_sha256": case.case_sha256,
+            "source": case.source,
+            "split": case.split,
+            "suggestion": suggestion,
+            "broker_outcome": decision.outcome.value,
+            "judgment_source": decision.judgment_source,
+            "candidates": len(decision.candidates),
+            "reason": "; ".join(decision.reasons),
+            "request": case.request,
+        })
+
+    path = Path(corpus.root) / "queues" / f"{args.profile}.md"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(_render_queue(args.profile, rows, args.judgment), encoding="utf-8")
+    return {"ok": True, "profile": args.profile, "cases": len(rows), "queue": str(path),
+            "judgment": args.judgment, "prelabels_written": bool(args.write_prelabels),
+            "suggestions": dict(sorted(suggestions.items()))}
+
+
+def _render_queue(profile: str, rows: list[dict], judgment: str) -> str:
+    """Render the review queue: per Case, its identity, suggestion and redacted request."""
+    lines = [
+        f"# Review queue — {profile}",
+        "",
+        f"Suggestions from `{judgment}`. Review each Case, then record the outcome:",
+        "",
+        "```sh",
+        f"python3 scripts/corpus.py review --profile {profile} --case <sha> --outcome <skill-id|no_skill>",
+        "```",
+        "",
+        f"Cases: {len(rows)}",
+        "",
+    ]
+    for row in rows:
+        lines += [
+            f"## {row['case_sha256']}",
+            "",
+            f"- source: {row['source']}  split: {row['split']}",
+            f"- suggested: {row['suggestion']}  (broker: {row['broker_outcome']}, "
+            f"source: {row['judgment_source']}, candidates: {row['candidates']})",
+            f"- reason: {row['reason'] or '-'}",
+            "- request:",
+            "",
+        ]
+        lines += [f"> {line}" if line else ">" for line in row["request"].splitlines()]
+        lines.append("")
+    return "\n".join(lines)
+
+
+class _NullEvidence:
+    """An Evidence Log sink: the queue reads each Decision from the Intervention Result."""
+
+    def append(self, decision) -> None:
+        return None
 
 
 def _purge(args: argparse.Namespace) -> dict:

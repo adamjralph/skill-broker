@@ -592,6 +592,26 @@ class CorpusCliTest(unittest.TestCase):
         self.assertTrue(purged["purged"]["removed"])
         self.assertIsNone(corpus.get(self.store.profile, case.case_sha256))
 
+    def test_queue_writes_a_machine_local_review_queue_with_prelabels(self) -> None:
+        self.extract()
+
+        result = self.run_cli(
+            "queue", "--profile", self.store.profile, "--corpus", str(self.fixture.corpus),
+            "--store", str(self.store.root), "--judgment", "first_candidate",
+            "--write-prelabels")
+
+        self.assertEqual(result["cases"], 2)
+        self.assertTrue(result["prelabels_written"])
+        queue = Path(result["queue"])
+        self.assertTrue(str(queue).startswith(str(self.fixture.corpus)))
+        text = queue.read_text(encoding="utf-8")
+        corpus = CorpusStore(self.fixture.corpus)
+        case = next(c for c in corpus.cases(self.store.profile)
+                    if c.request == "a second request")
+        self.assertIn(case.case_sha256, text)
+        self.assertIn("a second request", text)
+        self.assertTrue(corpus.get(self.store.profile, case.case_sha256).prelabel)
+
     def test_an_unconsented_source_is_refused_not_written(self) -> None:
         add_session(self.fixture.db, "tg-1", "telegram", profile_name=self.store.profile)
         add_turn(self.fixture.db, "tg-1", "third party", timestamp=3.0)
