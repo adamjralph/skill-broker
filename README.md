@@ -33,7 +33,11 @@ Soft Thresholds, and the injection gate: the data-independent Hard Gates checked
 fail-closed with a recorded Incident, and the per-batch injection switch. The Shadow Report and
 its batch review assemble recorded Route Decisions and observed skill use into the reviewed
 artifact whose review is the only thing that enables a batch. Injection stays off by default.
-The remaining gate is #53's Brokered-withholding decision before the bounded pilot (#57).
+The bounded pilot (#57) is rehearsed deterministically end to end — Cutover withholding and
+byte-exact rollback, a reviewed Shadow Report enabling exactly one batch, a real Hermes turn
+receiving a Pack, and duplicate suppression — without touching live Consumer state; the live
+enablement awaits the operator's reviewed shadow traffic. The next stage is measured expansion
+(#58).
 
 Canonical documents:
 

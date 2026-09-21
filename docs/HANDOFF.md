@@ -1,7 +1,7 @@
 # Skill Broker handoff
 
-Updated: 2026-09-21 07:28 AEST (verified against the working tree, Git, GitHub, and the store)
-Next objective: the bounded intervention pilot **[#57](https://github.com/adamjralph/skill-broker/issues/57)**. The withholding decision **[#53](https://github.com/adamjralph/skill-broker/issues/53)** (ADR-0021) is made and implemented; **[#52](https://github.com/adamjralph/skill-broker/issues/52)** (Hard Gates, fail-closed, the per-batch switch) and **[#56](https://github.com/adamjralph/skill-broker/issues/56)** (the Shadow Report and batch review) are built.
+Updated: 2026-09-21 11:27 AEST (verified against the working tree, Git, GitHub, and the store)
+Next objective: **measured expansion [#58](https://github.com/adamjralph/skill-broker/issues/58)**. The bounded pilot **[#57](https://github.com/adamjralph/skill-broker/issues/57)** is built and rehearsed deterministically end to end (`tests/hermes_adapter/run_pilot_proof.py`); live enablement for `stillroom-signal-generator` awaits the operator's reviewed shadow traffic. The withholding decision **[#53](https://github.com/adamjralph/skill-broker/issues/53)** (ADR-0021), the Hard Gates and per-batch switch **[#52](https://github.com/adamjralph/skill-broker/issues/52)**, the Shadow Report and batch review **[#56](https://github.com/adamjralph/skill-broker/issues/56)** and the project-setup fix **[#59](https://github.com/adamjralph/skill-broker/issues/59)** are built.
 
 ## Start here
 
@@ -24,11 +24,11 @@ Authoritative spec and decisions:
 **Git.** Branch `main`, HEAD is the #54 Replay Corpus commit on top of `b3b2ab9` (the #51 Adapter). Recent broker commits:
 `47e6e00` #48 Judgment/Grant, `e19deea` #49 Pack, `46c436c` #50 live Jev, `b3b2ab9` #51 Adapter, `21e3638` #54 Replay Corpus, then #55 Offline evaluation.
 
-**Tests.** `python3 -m unittest discover -s tests` from the repo root → **368 tests, all passing**. No packaging, no third-party deps beyond PyYAML for the store tooling. The Adapter's Hermes-seam proof is separate (it needs the Hermes venv): `~/.hermes/hermes-agent/.venv/bin/python tests/hermes_adapter/run_shadow_proof.py` → `VERDICT: PASS`.
+**Tests.** `python3 -m unittest discover -s tests` from the repo root → **380 tests, all passing**. No packaging, no third-party deps beyond PyYAML for the store tooling. The executed Hermes-seam proofs are separate (they need the Hermes venv): `~/.hermes/hermes-agent/.venv/bin/python tests/hermes_adapter/run_shadow_proof.py` → `VERDICT: PASS`, and `~/.hermes/hermes-agent/.venv/bin/python tests/hermes_adapter/run_pilot_proof.py` → `VERDICT: PASS`.
 
 **Broker modules** (`scripts/broker/`): `broker.py` (`Broker.prepare_turn`, the only external seam), `closure.py` (`authorised_closure`, `dependency_closure`), `retrieval.py` (BM25 candidate ranking), `metadata.py` (frontmatter retrieval metadata), `judgment.py` (`JudgmentCall`, sources, `validate`, `grant`, `FallbackJudgmentSource`, `FirstCandidateJudgmentSource`, SHA-bound `Recording`), `jev.py` (`JevJudgmentSource`, `live_judgment_source`), `pack.py` (`HookConfig`, `Budget`, `build_pack`, Pack Delivery), `evidence.py` (`EvidenceLog`, `JsonlEvidenceLog`, `SessionLedger`, `append_jsonl`), `types.py` (`RouteDecision`, `InterventionResult`, `PackDelivery`, …), `adapter.py` (the Hermes Adapter and its API-request evidence handle), `corpus.py` (Replay Corpus extraction, the machine-local Case store, the committed reviewed-label and Recording stores), `evaluation.py` (offline replay over Reviewed Cases and Recordings, per-split metrics, retrieval/Judgment/Grant attribution, the committed pre-registration of Soft Thresholds, and `soft_threshold_regression`), `gate.py` (the Hard Gates, fail-closed Incidents, the per-batch switch, and the prompt/tool-schema baseline), `report.py` (the Shadow Report and its batch review), `hermes_plugin/` (the loadable `skill-broker` plugin). The CLIs are `scripts/corpus.py`, `scripts/evaluate.py`, `scripts/gate.py` and `scripts/shadow_report.py`.
 
-**Closed tickets.** #45–#55 (module home, seam, retrieval, Judgment/Grant, Pack, live Jev, Hermes Adapter in Shadow Mode, Replay Corpus and Reviewed Cases, offline routing evaluation and pre-registered Soft Thresholds) #52 (Hard Gates, fail-closed, the per-batch injection switch), #53 (Brokered withholding decided and implemented, ADR-0021) and #56 (the Shadow Report and batch review).
+**Closed tickets.** #45–#55 (module home, seam, retrieval, Judgment/Grant, Pack, live Jev, Hermes Adapter in Shadow Mode, Replay Corpus and Reviewed Cases, offline routing evaluation and pre-registered Soft Thresholds) #52 (Hard Gates, fail-closed, the per-batch injection switch), #53 (Brokered withholding decided and implemented, ADR-0021), #56 (the Shadow Report and batch review), #57 (the bounded intervention pilot, rehearsed) and #59 (the project-setup skills block).
 
 **Skill Store.** `~/skill-store` (repo `adamjralph/skill-store`): **415 identities**, manifest verifies clean; two policies `life-agent.json` and `stillroom-signal-generator.json`. Verified this session:
 
@@ -39,9 +39,11 @@ python3 scripts/profile_policy.py validate --store ~/skill-store    # 2 policies
 
 **Cutover.** `life-agent` is live, zero-delta, rollback rehearsed; farm at `~/.local/share/skill-broker/farms/life-agent`. Brokered withholding is a Cutover `skills.disabled` edit (ADR-0021): a pilot rehearsal applied the five Brokered Names to a byte-copy of `stillroom-signal-generator`'s config, verified the gate, and rolled the config back byte-for-byte.
 
-**Open frontier** (open, no open blocker, unassigned): #59. Gated: #57←#52+#53+#56 (all closed), #58←#57. #53 (B16) is decided and implemented, so the pilot is unblocked.
+**Open frontier** (open, no open blocker, unassigned): #58 (measured expansion), gated by #57 which is now built and rehearsed. The wayfinder map #1 and the Stage 9 retirement review #23 remain open.
 
 **Evidence from #51.** The Adapter is built (`scripts/broker/adapter.py`) and loadable as the `skill-broker` Hermes plugin (`scripts/broker/hermes_plugin/`). The executed Hermes-seam proof runs five modes against a mock provider under one isolated `HERMES_HOME` and passes: byte-identical system prompt and tool schema control-vs-treatment and across turns, no Pack on the wire in Shadow Mode while a Pack is built, one evidence record per provider request locating its Route Decision, multimodal and `codex_app_server` refused with the reason recorded, an Adapter failure swallowed, and the effective hook cap read from config (which is unchanged). Injection remains **off** by default.
+
+**Evidence from #57.** `tests/hermes_adapter/run_pilot_proof.py` rehearses the whole pilot lifecycle with no live Consumer state touched. The Cutover runs on a byte-copy of `stillroom-signal-generator`'s `config.yaml`: the farm is wired into `skills.external_dirs`, the five Brokered Names are withheld in `skills.disabled`, the policy gate is green, and rollback restores the config byte-for-byte. Shadow Mode runs real Hermes turns under an isolated `HERMES_HOME` against the **real** Skill Store and policy with a mock provider, building a Pack with nothing on the wire. A Shadow Report assembled from those recorded Route Decisions is approved, enabling exactly one batch (`stillroom-signal-generator-brokered`); the same seam with the batch enabled steers a real turn with a Pack carrying `coreyhaines31.cold-email`, keeps the system prompt and tool schema byte-identical to the plugin-disabled control, suppresses the repeated turn, and locates every provider request's Route Decision from the Evidence Log; the batch is then disabled back to foundation-only. `VERDICT: PASS`. `tests/test_pilot_proof.py` (7 tests) exercises the proof's acceptance logic so a broken checker cannot pass silently.
 
 **Evidence from #54.** `scripts/broker/corpus.py` implements extraction from a Hermes `state.db` (`read_turns`), redaction of secrets/identifiers at extraction, the machine-local `CorpusStore` (refusing a root inside the repo, and refusing any source not opted in), the committed `LabelStore` (hand-corrected `no_skill` or closure-authorised Primary only), the SHA-bound `RecordingStore` bound to the Case by content hash, the disjoint threshold/held-out `split_for`, `profile_status` against the provisional Stage 5 minimum, and `retention_report` for the Stage 5/6 review. `scripts/corpus.py` exposes `extract`/`status`/`retention`/`review`/`prelabel`/`record`/`purge`. A real-machine smoke run extracted the pilot `stillroom-signal-generator` into a throwaway corpus: 4 Cases (cli/tool), 4 redactions, refused `desktop` (9) and `kanban` (14); the store/root DBs are never pooled and an untagged turn belongs only to the default profile. No real corpus content or labels were created.
 
@@ -53,10 +55,10 @@ python3 scripts/profile_policy.py validate --store ~/skill-store    # 2 policies
 
 ## In progress and pending
 
-Nothing is half-written. #56 and #53 are complete and committed; the next builds are:
+Nothing is half-written. #59 and #57 are complete and committed; the next build is:
 
-- **#57 The bounded intervention pilot** — populate the corpus, run Shadow Mode, review a report, enable one batch.
-- **#59 Fix the project-setup skills block requirement** (independent, small).
+- **#58 Measured expansion** — the procedure and the next batch, gated by #57.
+- The **live #57 enablement** remains an operator step: populate the corpus for the profile, run Shadow Mode over real traffic, review the report with `scripts/shadow_report.py`, then approve the batch.
 
 The Adapter's settings are `store`, `profile`, `evidence_dir`, `judgment` (`live` | `recorded` | `first_candidate` | `no_skill`) and `inject` (deprecated; the per-batch gate state under `evidence_dir` is authoritative). Route Decisions are appended to `<evidence_dir>/route_decisions.jsonl`; the API-request evidence handle to `<evidence_dir>/api_requests.jsonl`; the gate state to `<evidence_dir>/gate.json`; Incidents to `<evidence_dir>/gate_incidents.jsonl`.
 
