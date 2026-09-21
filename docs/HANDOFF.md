@@ -58,7 +58,7 @@ python3 scripts/profile_policy.py validate --store ~/skill-store    # 2 policies
 Nothing is half-written. #59 and #57 are complete and committed; the next build is:
 
 - **#58 Measured expansion** — the procedure and the next batch, gated by #57.
-- The **live #57 enablement** remains an operator step: populate the corpus for the profile, run Shadow Mode over real traffic, review the report with `scripts/shadow_report.py`, then approve the batch.
+- The **live #57 enablement** remains an operator step: populate the corpus for the profile, run Shadow Mode over real traffic, review the report with `scripts/shadow_report.py`, then approve the batch. The step-by-step path is [`docs/runbooks/live-pilot.md`](runbooks/live-pilot.md); [`docs/runbooks/pilot-enable.sh`](runbooks/pilot-enable.sh) automates Phases 0–3 and is dry-run by default.
 
 The Adapter's settings are `store`, `profile`, `evidence_dir`, `judgment` (`live` | `recorded` | `first_candidate` | `no_skill`) and `inject` (deprecated; the per-batch gate state under `evidence_dir` is authoritative). Route Decisions are appended to `<evidence_dir>/route_decisions.jsonl`; the API-request evidence handle to `<evidence_dir>/api_requests.jsonl`; the gate state to `<evidence_dir>/gate.json`; Incidents to `<evidence_dir>/gate_incidents.jsonl`.
 
