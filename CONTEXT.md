@@ -295,6 +295,12 @@ A named group of Brokered Skills one recorded review authorises the broker to in
 profile. Injection is off until a batch is enabled, and enabling names the profile and the batch.
 _Avoid_: rollout, release
 
+**Expansion**:
+The reviewed act of enabling one further Injection Batch for a profile, additive to the running
+batch, on fresh evidence and after a rollback rehearsal. One batch at a time; the Soft Thresholds
+do not move to admit it.
+_Avoid_: rollout, scale-up, broadening
+
 **Batch Review**:
 The recorded review that authorises enabling one Injection Batch, naming the profile and the
 batch. After a Hard-Gate breach, only a review recorded after the breach may re-enable it.
@@ -310,6 +316,11 @@ _Avoid_: feature flag, kill switch
 The durable record of one Hard-Gate breach: the gate, the turn's correlation ids and reason
 markers, and when it happened. An Incident fails the profile closed and is never rewritten.
 _Avoid_: alert, warning
+
+**Open Incident**:
+An Incident no review recorded after it has closed. While one is open a profile cannot Expand:
+growth is not the recovery path from a breach.
+_Avoid_: unresolved bug, pending review
 
 **Failed Closed**:
 The state a profile enters on a Hard-Gate breach: foundation-only with injection off, until a

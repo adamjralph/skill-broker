@@ -322,6 +322,23 @@ class InjectionGate:
                 incidents.append(incident)
         return incidents
 
+    def last_review(self, profile: str) -> dict:
+        """The most recent recorded review for a profile, or an empty mapping (ticket #58)."""
+        review = self._profile_record(self._read(), profile).get("last_review")
+        return dict(review) if review else {}
+
+    def open_incidents(self, profile: str) -> list[Incident]:
+        """The profile's Incidents a later review has not closed (ticket #58).
+
+        A review recorded *after* an Incident closes it: re-enabling a failed-closed profile is
+        deliberate and reviewed (AC3, ADR-0019). The comparison is against the profile's last
+        recorded review, so an Incident with no review after it (or one at the same instant) stays
+        open and holds expansion.
+        """
+        reviewed_at = str(self.last_review(profile).get("reviewed_at", ""))
+        return [incident for incident in self.incidents(profile)
+                if not reviewed_at or incident.recorded_at >= reviewed_at]
+
     # -- the switch ----------------------------------------------------------------------
 
     def enable(self, batch: InjectionBatch, review: GateReview) -> dict:

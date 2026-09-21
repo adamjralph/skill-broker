@@ -36,8 +36,12 @@ artifact whose review is the only thing that enables a batch. Injection stays of
 The bounded pilot (#57) is rehearsed deterministically end to end — Cutover withholding and
 byte-exact rollback, a reviewed Shadow Report enabling exactly one batch, a real Hermes turn
 receiving a Pack, and duplicate suppression — without touching live Consumer state; the live
-enablement awaits the operator's reviewed shadow traffic. The next stage is measured expansion
-(#58).
+enablement awaits the operator's reviewed shadow traffic. Measured expansion (#58) is built as a
+routine: one additive batch at a time, on fresh evidence with its own review, with the Soft
+Thresholds held (or re-derived only against a strictly larger corpus), the rollback rehearsed
+before enabling, the post-batch foundation-resolution and hash checks reported, and an open
+Incident failing expansion closed. The second batch is rehearsed end to end against the real
+store (`tests/hermes_adapter/run_expansion_proof.py`).
 
 Canonical documents:
 
@@ -45,6 +49,7 @@ Canonical documents:
 - [`CONTEXT.md`](./CONTEXT.md) — the domain language, plus [`docs/adr/`](./docs/adr/)
 - issue #44 — the accepted specification for the broker half
 - [`docs/HANDOFF.md`](./docs/HANDOFF.md) — the live continuation state and next action
+- [`docs/runbooks/expansion.md`](./docs/runbooks/expansion.md) — the measured-expansion routine
 
 ## Delivery stages
 

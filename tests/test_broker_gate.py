@@ -319,6 +319,46 @@ class ReEnableAfterBreachTest(unittest.TestCase):
             self.assertTrue(gate.injecting("p"))
             self.assertEqual(gate.enabled_batch("p").name, "narrower")
 
+
+class OpenIncidentTest(unittest.TestCase):
+    """An Incident is open until a review recorded after it closes it (ticket #58, AC6)."""
+
+    def test_a_breach_leaves_an_open_incident(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            clock = _Clock(NOW)
+            gate = InjectionGate(state_path=Path(tmp) / "gate.json", clock=clock)
+            gate.enable(InjectionBatch(name="pilot", profile="p"),
+                        GateReview(profile="p", batch="pilot", reviewer="adam",
+                                   outcome=APPROVE, reviewed_at=NOW))
+
+            gate.fail_closed("p", (HardGate.HASH_DISAGREEMENT.value,))
+
+            self.assertEqual(len(gate.open_incidents("p")), 1)
+
+    def test_a_later_review_closes_the_incident(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            clock = _Clock(NOW)
+            gate = InjectionGate(state_path=Path(tmp) / "gate.json", clock=clock)
+            gate.fail_closed("p", (HardGate.HASH_DISAGREEMENT.value,))
+            clock.now = "2026-09-22T00:00:00+00:00"
+
+            gate.enable(InjectionBatch(name="recovery", profile="p"),
+                        GateReview(profile="p", batch="recovery", reviewer="adam",
+                                   outcome=APPROVE, reviewed_at=clock.now))
+
+            self.assertEqual(gate.open_incidents("p"), [])
+            self.assertEqual(len(gate.incidents("p")), 1)  # the Incident itself is never erased
+
+    def test_an_incident_for_another_profile_does_not_open_this_one(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            clock = _Clock(NOW)
+            gate = InjectionGate(state_path=Path(tmp) / "gate.json", clock=clock)
+
+            gate.fail_closed("other", (HardGate.JUDGMENT_INVALID.value,))
+
+            self.assertEqual(gate.open_incidents("p"), [])
+
+
 class SoftThresholdGateTest(unittest.TestCase):
     """A Soft-Threshold regression blocks expansion and leaves running injection on (AC5)."""
 
