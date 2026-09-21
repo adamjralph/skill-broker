@@ -48,6 +48,7 @@ from .gate import (
     InjectionBatch,
     InjectionGate,
     check_hard_gates,
+    closure_versions,
 )
 from .report import ReportError, ShadowReport, apply_review
 from .types import RouteDecision
@@ -244,14 +245,14 @@ def _re_enable(gate: InjectionGate, profile: str, batch: InjectionBatch) -> None
     and ``enable`` validates the batch name, so the restoration review is rebuilt to name the
     batch actually being restored while keeping the recorded reviewer, digest and timestamp.
     """
-    stored = gate.last_review(profile)
+    stored = GateReview.from_record(gate.last_review(profile))
     gate.enable(batch, GateReview(
         profile=profile,
         batch=batch.name,
-        reviewer=str(stored.get("reviewer") or "expansion rollback"),
+        reviewer=stored.reviewer or "expansion rollback",
         outcome=APPROVE,
-        reviewed_at=str(stored.get("reviewed_at") or ""),
-        report_sha256=str(stored.get("report_sha256") or ""),
+        reviewed_at=stored.reviewed_at,
+        report_sha256=stored.report_sha256,
     ))
 
 
@@ -314,7 +315,7 @@ def check_after_batch(*, profile: str, batch: str, decisions: Sequence[RouteDeci
         breached.update(breaches)
         if HardGate.FOUNDATION_REGRESSION.value in breaches:
             regressions += 1
-        closure = {entry.id: entry.version for entry in decision.authorised_closure}
+        closure = closure_versions(decision)
         for grant in decision.grants:
             if grant.id not in closure:
                 continue  # an unauthorised Grant is the unauthorised_grant gate, not a hash
@@ -335,7 +336,7 @@ def check_after_batch(*, profile: str, batch: str, decisions: Sequence[RouteDeci
 
 def expand(*, gate: InjectionGate, report: ShadowReport, reviewer: str, post_probe:
            Callable[[], Sequence[RouteDecision]], profile: str | None = None,
-           outcome: str = APPROVE, reviewed_at: str = "", batch: InjectionBatch | None = None,
+           reviewed_at: str = "", batch: InjectionBatch | None = None,
            foundation_ids: Sequence[str] = (), registry: ThresholdRegistry | None = None,
            evaluation_report=None, allow_re_derivation: bool = False,
            ledger_path: Path | str | None = None,
@@ -345,15 +346,16 @@ def expand(*, gate: InjectionGate, report: ShadowReport, reviewer: str, post_pro
     The reviewed :class:`~broker.report.ShadowReport` is the input, and its review is recorded by
     :func:`~broker.report.apply_review` — the same guards that enable the pilot batch (thresholds
     pre-registered, every checked Hard Gate passed, no quality floor regressed) — so the procedure
-    cannot enable a batch the Shadow Report itself would refuse. The pre-flight checks run before
-    anything is touched; the rollback rehearsal runs while the current exposure is still known;
-    only then is the new batch enabled. ``post_probe`` is called immediately after enabling and
-    must return the post-batch window's Route Decisions. A breach fails the profile closed, so an
-    expansion that goes wrong reverts rather than persists.
+    cannot enable a batch the Shadow Report itself would refuse. Expansion only ever approves: a
+    batch is additive, so a narrowing review is not a growth step. The pre-flight checks run
+    before anything is touched; the rollback rehearsal runs while the current exposure is still
+    known; only then is the new batch enabled. ``post_probe`` is called immediately after enabling
+    and must return the post-batch window's Route Decisions. A breach fails the profile closed, so
+    an expansion that goes wrong reverts rather than persists.
     """
     profile = profile or report.profile
     batch = batch or report.batch
-    review = GateReview(profile=profile, batch=batch.name, reviewer=reviewer, outcome=outcome,
+    review = GateReview(profile=profile, batch=batch.name, reviewer=reviewer, outcome=APPROVE,
                         reviewed_at=reviewed_at, report_sha256=report.report_sha256)
     assert_expandable(gate, profile)
     assert_fresh_review(gate, profile, review)
@@ -366,7 +368,7 @@ def expand(*, gate: InjectionGate, report: ShadowReport, reviewer: str, post_pro
     thresholds = verify_thresholds(registry, profile, report=evaluation_report,
                                    allow_re_derivation=allow_re_derivation)
     try:
-        reviewed = apply_review(report, outcome=outcome, reviewer=reviewer, gate=gate,
+        reviewed = apply_review(report, outcome=APPROVE, reviewer=reviewer, gate=gate,
                                 reviewed_at=reviewed_at, batch=batch)
     except (ReportError, GateError) as exc:
         raise ExpansionError(str(exc)) from exc

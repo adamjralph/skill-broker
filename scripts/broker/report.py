@@ -40,6 +40,7 @@ from .gate import (
     InjectionGate,
     check_hard_gates,
     closure_failure_kind,
+    closure_versions,
     soft_threshold_regression,
 )
 from .types import RouteDecision, TurnOutcome
@@ -336,7 +337,8 @@ def apply_review(report: ShadowReport, *, outcome: str, reviewer: str, gate: Inj
     The review is bound to the report by ``report_sha256``, so it names exactly what was
     reviewed. ``approve_narrower`` enables the ``batch`` supplied (defaulting to the report's
     batch with the same skills), and only an approval reaches :meth:`InjectionGate.enable`; a
-    rejection is recorded and Shadow Mode keeps running.
+    rejection is recorded and Shadow Mode keeps running. An approval supplied with a ``batch``
+    must cover exactly the reviewed batch's Skills, so a review cannot enable a different set.
     """
     if outcome not in (APPROVE, APPROVE_NARROWER, REJECT):
         raise ReportError(f"review outcome {outcome!r} is not approve/reject/approve_narrower")
@@ -358,6 +360,10 @@ def apply_review(report: ShadowReport, *, outcome: str, reviewer: str, gate: Inj
     target = batch or report.batch
     if target.profile != report.profile:
         raise ReportError(f"the reviewed batch is for {target.profile!r}, not {report.profile!r}")
+    if outcome == APPROVE and batch is not None and set(batch.skills) != set(report.batch.skills):
+        raise ReportError(
+            "an approval enables exactly the reviewed batch; use approve_narrower to enable a "
+            "proper subset of the report's Brokered Allowlist")
     review = GateReview(profile=report.profile, batch=target.name, reviewer=reviewer,
                         outcome=outcome, reviewed_at=reviewed_at,
                         report_sha256=report.report_sha256)
@@ -435,7 +441,7 @@ def _summarize(turns: list[ShadowTurn], names_to_ids: Mapping[str, str]) -> Spli
                   duplicate_suppressions=0)
     for turn in turns:
         decision = turn.decision
-        closure = {entry.id: entry.version for entry in decision.authorised_closure}
+        closure = closure_versions(decision)
         selected = decision.grants[0].id if decision.grants else None
         actual = {names_to_ids.get(name, name) for name in turn.observed}
         if decision.outcome is TurnOutcome.GRANTED:

@@ -262,6 +262,18 @@ class ReviewTest(ReportTestCase):
             self.assertEqual(reviewed.review["report_sha256"], self.report.report_sha256)
             self.assertEqual(reviewed.report_sha256, self.report.report_sha256)
 
+    def test_an_approval_refuses_a_batch_that_is_not_the_reviewed_one(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            gate = self.enable_gate(tmp)
+            narrower = InjectionBatch(name=f"{self.profile}-narrowed", profile=self.profile,
+                                      skills=(ALIASED.id,))
+
+            with self.assertRaises(ReportError):
+                apply_review(self.report, outcome=APPROVE, reviewer="adam", gate=gate,
+                             batch=narrower)
+
+            self.assertFalse(gate.injecting(self.profile))
+
     def test_a_rejection_enables_nothing_and_records_the_review(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             gate = self.enable_gate(tmp)

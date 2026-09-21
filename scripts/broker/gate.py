@@ -216,6 +216,26 @@ def closure_failure_kind(reasons: Sequence[str]) -> str | None:
     return None
 
 
+def closure_versions(decision: RouteDecision) -> dict[str, str]:
+    """The Decision's Authorised Closure keyed by store ID (spec B6).
+
+    The one map a Grant is checked against, so every Hard-Gate check, the Shadow Report's
+    metrics and the post-batch window read the same view of the closure.
+    """
+    return {entry.id: entry.version for entry in decision.authorised_closure}
+
+
+def review_closes_incident(incident_at: str, reviewed_at: str) -> bool:
+    """Whether a review recorded at ``reviewed_at`` closes an Incident at ``incident_at``.
+
+    A review closes an Incident only when recorded **strictly after** it, so an Incident and the
+    review at the same instant leave it open and the turn that breached can never flip the switch
+    (ADR-0019). One home for the rule :meth:`InjectionGate.open_incidents` and
+    :meth:`InjectionGate.enable` both enforce, so the two can never drift.
+    """
+    return bool(reviewed_at) and (not incident_at or reviewed_at > incident_at)
+
+
 def check_hard_gates(decision: RouteDecision,
                      *, foundation_ids: Sequence[str] = ()) -> tuple[str, ...]:
     """The Hard Gates breached by one Route Decision, in canonical order (AC1).
@@ -228,7 +248,7 @@ def check_hard_gates(decision: RouteDecision,
     unknown), which is the data-independent signal available at this seam. Whether the native
     Hermes index still exposes the Foundation Set is the withholding gate placed by ticket #53.
     """
-    closure = {entry.id: entry.version for entry in decision.authorised_closure}
+    closure = closure_versions(decision)
     breaches: list[str] = []
 
     if any(grant.id not in closure for grant in decision.grants):
@@ -337,7 +357,7 @@ class InjectionGate:
         """
         reviewed_at = str(self.last_review(profile).get("reviewed_at", ""))
         return [incident for incident in self.incidents(profile)
-                if not reviewed_at or incident.recorded_at >= reviewed_at]
+                if not review_closes_incident(incident.recorded_at, reviewed_at)]
 
     # -- the switch ----------------------------------------------------------------------
 
@@ -358,7 +378,7 @@ class InjectionGate:
             raise GateError(f"{batch.profile} expansion is blocked by a Soft-Threshold regression")
         if record.get("failed_closed"):
             failed_at = str(record.get("failed_closed_at", ""))
-            if review.reviewed_at <= failed_at:
+            if not review_closes_incident(failed_at, review.reviewed_at):
                 raise GateError(
                     f"{batch.profile} is failed closed since {failed_at}; re-enabling needs a "
                     "review recorded after the breach")
@@ -552,5 +572,7 @@ __all__ = [
     "STATE_VERSION",
     "check_hard_gates",
     "closure_failure_kind",
+    "closure_versions",
+    "review_closes_incident",
     "soft_threshold_regression",
 ]
