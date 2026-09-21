@@ -30,8 +30,8 @@ import profile_policy as pp
 import store_manifest as sm
 
 from .closure import authorised_closure
-from .judgment import NO_SKILL, RecordedJudgmentSource, Recording, RecordingMismatch
-from .types import ResolvedSkillVersion
+from .judgment import CHOICE_KEYS, NO_SKILL, RecordedJudgmentSource, Recording, RecordingMismatch
+from .types import ResolvedSkillVersion, RouteDecision
 
 #: Channels whose turns are the gated profile's own requests and the agent-authored traffic:
 #: in by default (ADR-0020). Every other source — including ``kanban`` and ``acp`` — is opt-in.
@@ -122,6 +122,10 @@ class Case:
     cwd: str | None = None
     title: str | None = None
     prelabel: str | None = None
+    #: Hash of the *unredacted* request, so a recorded Route Decision (which hashes the raw
+    #: request) joins its Case exactly. ``case_sha256`` stays the redacted content's hash, which
+    #: is what a Recording binds to.
+    request_sha256: str = ""
 
     def verify(self) -> bool:
         """Whether the stored content hash still matches the request text (drift check)."""
@@ -145,6 +149,7 @@ class Case:
             "cwd": self.cwd,
             "title": self.title,
             "prelabel": self.prelabel,
+            "request_sha256": self.request_sha256,
             "authorised_closure": [entry.to_record() for entry in self.authorised_closure],
         }
 
@@ -168,6 +173,7 @@ class Case:
             cwd=record.get("cwd"),
             title=record.get("title"),
             prelabel=record.get("prelabel"),
+            request_sha256=str(record.get("request_sha256", "")),
         )
 
 
@@ -592,6 +598,7 @@ def extract_cases(
             continue
         case = Case(
             case_sha256=case_sha256,
+            request_sha256=digest(turn.content),
             profile=profile,
             request=text,
             source=turn.source,
@@ -873,6 +880,44 @@ def profile_status(corpus: CorpusStore, labels: LabelStore, profile: str, *,
     )
 
 
+def decision_for_case(case: Case, decisions: Iterable[RouteDecision]) -> RouteDecision:
+    """The recorded Route Decision that carries a Case's request (ticket #60).
+
+    Joins on the profile and the request's content hash, because a live Route Decision's
+    ``turn_id`` is Hermes's ephemeral per-turn correlation id, not the ``state.db`` message id,
+    so the two records never join by id. Identical requests dedupe to one Case, so the earliest
+    Decision for the request is returned. A Case extracted before the request hash was recorded
+    is refused rather than guessed at, so a Recording is never frozen against the wrong turn.
+    """
+    if not case.request_sha256:
+        raise CorpusError(
+            f"case {case.case_sha256} has no request hash; re-extract the corpus first")
+    matches = [
+        decision for decision in decisions
+        if decision.profile == case.profile
+        and decision.session_id == case.session_id
+        and decision.request_sha256 == case.request_sha256
+    ]
+    if not matches:
+        raise CorpusError(
+            f"no Route Decision for case {case.case_sha256} "
+            f"({case.profile} {case.session_id!r} {case.request_sha256[:12]})")
+    return matches[0]
+
+
+def claim_from_decision(decision: RouteDecision) -> dict:
+    """A recorded Route Decision's validated Judgment, as the Choice a Recording stores.
+
+    The Decision's Judgment record carries the four Choice keys plus a ``no_skill`` convenience
+    flag; a Recording must be exactly the Choice the validator accepts, so only the Choice keys
+    are returned.
+    """
+    if decision.judgment is None:
+        raise CorpusError("the Route Decision carries no Judgment to record")
+    record = decision.judgment.to_record()
+    return {key: record[key] for key in CHOICE_KEYS}
+
+
 # --------------------------------------------------------------------------------------------
 # The committed, SHA-bound Recording store
 # --------------------------------------------------------------------------------------------
@@ -962,6 +1007,8 @@ def _inside(path: Path, parent: Path) -> bool:
 
 __all__ = [
     "Case",
+    "claim_from_decision",
+    "decision_for_case",
     "ConsentError",
     "CorpusError",
     "CorpusStore",

@@ -151,7 +151,8 @@ python3 scripts/corpus.py status  --profile <profile> --minimum 20
 
 # for each Case: hand-review the outcome, and freeze the Jev claim the live broker recorded
 python3 scripts/corpus.py review --profile <profile> --case <sha> --outcome <skill-id|no_skill>
-python3 scripts/corpus.py record --profile <profile> --case <sha> --claim <claim.json>
+python3 scripts/corpus.py record --profile <profile> --case <sha> \
+    --from-evidence ~/.hermes/skill-broker/route_decisions.jsonl
 
 python3 scripts/evaluate.py evaluate --profile <profile> --minimum 20
 python3 scripts/evaluate.py register --profile <profile> --minimum 20
@@ -161,9 +162,10 @@ Notes:
 
 - Raw request text lives machine-locally at `~/.config/skill-broker/corpus/` and is deletable;
   the repo only ever receives `corpus/labels/`, `corpus/recordings/` and `corpus/thresholds/`.
-- `--claim` is a Jev Choice (`primary`, `confidence`, `distribution`, `candidates`); the live
-  broker's validated `judgment` on the matching `route_decisions.jsonl` record is the natural
-  source. There is no helper that extracts it yet — flag this if it blocks you.
+- `--from-evidence` freezes the validated `judgment` the live broker already recorded in the
+  Evidence Log, joined to the Case by the request's content hash. It refuses a Judgment not
+  answered by live Jev unless `--any-source` is passed, so a `first_candidate` fallback cannot be
+  frozen as if it were a live call. `--claim <claim.json>` remains for a hand-supplied Choice.
 - Below the minimum the profile correctly stays in Shadow Mode; do not pad from another profile.
 
 ## Phase 6 — build and review the Shadow Report

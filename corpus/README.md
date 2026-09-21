@@ -30,9 +30,14 @@ python3 scripts/corpus.py extract --profile stillroom-signal-generator --consent
 # Report reviewed supply against the Stage 5 minimum for every extracted profile.
 python3 scripts/corpus.py status --minimum 20
 
-# Hand-review one Case, or freeze a live Jev outcome against it.
+# Hand-review one Case, or freeze a Jev outcome against it.
 python3 scripts/corpus.py review --profile stillroom-signal-generator \
     --case <case_sha256> --outcome local.adam-content-writing
+# Freeze the Judgment the live broker already recorded in its Evidence Log (joined by request
+# hash). Add --any-source only to freeze a non-Jev fallback deliberately.
+python3 scripts/corpus.py record --profile stillroom-signal-generator \
+    --case <case_sha256> --from-evidence ~/.hermes/skill-broker/route_decisions.jsonl
+# Or freeze a hand-supplied Jev Choice.
 python3 scripts/corpus.py record --profile stillroom-signal-generator \
     --case <case_sha256> --claim claim.json
 

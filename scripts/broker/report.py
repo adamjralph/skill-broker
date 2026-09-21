@@ -27,7 +27,7 @@ from pathlib import Path
 import profile_policy as pp
 import store_manifest as sm
 
-from .corpus import read_skill_use, read_turns
+from .corpus import Turn, digest, read_skill_use, read_turns
 from .evaluation import SoftThresholds, SplitMetrics, attribute
 from .gate import (
     APPROVE,
@@ -282,24 +282,50 @@ def build_shadow_report(*, profile: str, store: Path | str, evidence_path: Path 
     if since is not None and until is not None and since > until:
         raise ReportError(f"window start {since} is after its end {until}")
     human_review = dict(human_review or {})
-    turns = {(turn.session_id, turn.turn_id): turn for turn in read_turns(db)}
+    all_turns = read_turns(db)
+    by_turn_id = {(turn.session_id, turn.turn_id): turn for turn in all_turns}
+    # A live Route Decision's ``turn_id`` is Hermes's ephemeral per-turn correlation id, not the
+    # state.db message id, so it never joins by id. The request text is the durable key both
+    # records carry (as its content hash), and matching in log order resolves a repeated request
+    # to its own turn rather than the first one.
+    by_request: dict[tuple[str, str], list[Turn]] = {}
+    for turn in all_turns:
+        by_request.setdefault((turn.session_id, digest(turn.content)), []).append(turn)
+    matched: set[tuple[str, str]] = set()
     observed: dict[tuple[str, str], list[str]] = {}
     for use in read_skill_use(db):
         observed.setdefault((use.session_id, use.turn_id), []).append(use.skill)
 
+    def resolve(decision: RouteDecision) -> Turn | None:
+        """The session turn a recorded Decision belongs to, by id or by request content."""
+        session = decision.session_id or ""
+        turn = by_turn_id.get((session, decision.turn_id or ""))
+        if turn is not None:
+            matched.add((turn.session_id, turn.turn_id))
+            return turn
+        for candidate in by_request.get((session, decision.request_sha256), ()):
+            key = (candidate.session_id, candidate.turn_id)
+            if key not in matched:
+                matched.add(key)
+                return candidate
+        return None
+
     problems: list[str] = []
     shadow_turns: list[ShadowTurn] = []
     for decision in load_route_decisions(evidence_path, profile=profile):
-        key = (decision.session_id or "", decision.turn_id or "")
-        turn = turns.get(key)
+        turn = resolve(decision)
         if since is not None or until is not None:
             if turn is None:
-                problems.append(f"{key[0]}/{key[1]}: turn_not_in_window")
+                problems.append(
+                    f"{decision.session_id or ''}/{decision.turn_id or ''} "
+                    f"({decision.request_sha256[:12]}): turn_not_in_window")
                 continue
             if since is not None and turn.timestamp < since:
                 continue
             if until is not None and turn.timestamp > until:
                 continue
+        key = ((turn.session_id, turn.turn_id) if turn is not None
+               else (decision.session_id or "", decision.turn_id or ""))
         uses = tuple(_brokered_names(observed.get(key, ()), names_to_ids))
         shadow_turns.append(ShadowTurn(
             decision=decision,

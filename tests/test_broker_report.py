@@ -119,6 +119,53 @@ class AssemblyTest(ReportTestCase):
         self.assertEqual(len(decisions[0].authorised_closure), 3)
 
 
+class LiveJoinTest(ReportTestCase):
+    """A live Decision joins its turn by request content, not the ephemeral hook turn id (#60)."""
+
+    def prepare(self, *, session="s1", turn_id="s1:task:deadbeef"):
+        broker = Broker(store=self.fixture.store.root,
+                        evidence_log=JsonlEvidenceLog(self.evidence),
+                        judgment_source=StubJudgmentSource(GRANT))
+        broker.prepare_turn(REVIEW_REQUEST, self.profile,
+                            {"session_id": session, "turn_id": turn_id})
+
+    def test_a_live_decision_joins_by_request_hash(self) -> None:
+        add_session(self.fixture.db, "s1", "cli", profile_name=self.profile, started_at=0.0)
+        add_turn(self.fixture.db, "s1", REVIEW_REQUEST, timestamp=100.0)
+        self.prepare()
+
+        report = self.build(since=0.0, until=250.0)
+
+        self.assertEqual(report.turns, 1)
+        self.assertEqual(report.problems, ())
+
+    def test_a_repeated_request_resolves_to_each_of_its_turns(self) -> None:
+        add_session(self.fixture.db, "s1", "cli", profile_name=self.profile, started_at=0.0)
+        first = add_turn(self.fixture.db, "s1", REVIEW_REQUEST, timestamp=100.0)
+        second = add_turn(self.fixture.db, "s1", REVIEW_REQUEST, timestamp=200.0)
+        add_skill_call(self.fixture.db, "s1", "writing-method", timestamp=110.0)
+        add_skill_call(self.fixture.db, "s1", "writing-method", timestamp=210.0)
+        self.prepare(turn_id="s1:task:first")
+        self.prepare(turn_id="s1:task:second")
+
+        report = self.build(since=0.0, until=250.0)
+
+        self.assertEqual(report.turns, 2)
+        self.assertEqual(report.metrics.true_positive, 2)
+        self.assertEqual({entry.turn_id for entry in report.disagreements}, set())
+        self.assertEqual(len({str(first), str(second)}), 2)
+
+    def test_a_live_decision_with_no_matching_turn_is_a_recorded_problem(self) -> None:
+        add_session(self.fixture.db, "s1", "cli", profile_name=self.profile, started_at=0.0)
+        add_turn(self.fixture.db, "s1", "a different request", timestamp=100.0)
+        self.prepare()
+
+        report = self.build(since=0.0, until=250.0)
+
+        self.assertEqual(report.turns, 0)
+        self.assertIn("turn_not_in_window", " ".join(report.problems))
+
+
 class BatchNamingTest(ReportTestCase):
     """The report names the profile and the exact batch enabling would cover (AC2)."""
 

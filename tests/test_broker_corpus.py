@@ -38,6 +38,8 @@ from broker.corpus import (  # noqa: E402
     LabelError,
     LabelStore,
     RecordingStore,
+    claim_from_decision,
+    decision_for_case,
     digest,
     extract_cases,
     load_reviewed_cases,
@@ -48,6 +50,8 @@ from broker.corpus import (  # noqa: E402
     sessions_db,
     split_for,
 )
+from broker.judgment import CHOICE_KEYS  # noqa: E402
+from broker.types import Judgment, RouteDecision  # noqa: E402
 from broker_fixture import RecordingEvidenceLog, judgment_claim  # noqa: E402
 from corpus_fixture import add_session, add_turn, make_corpus_fixture  # noqa: E402
 from store_fixture import ALIASED, DISTINCT, write_policy  # noqa: E402
@@ -411,6 +415,59 @@ class RecordingTest(unittest.TestCase):
             self.recordings.bind(drifted)
 
 
+class ClaimFromEvidenceTest(unittest.TestCase):
+    """Freeze a Recording from the live broker's recorded Judgment (ticket #60)."""
+
+    def setUp(self) -> None:
+        self.fixture = make_corpus_fixture()
+        self.addCleanup(self.fixture.close)
+        self.store = self.fixture.store
+        self.corpus = CorpusStore(self.fixture.corpus)
+        add_session(self.fixture.db, "cli-1", "cli", profile_name=self.store.profile)
+        add_turn(self.fixture.db, "cli-1", "Draft it with local-writing", timestamp=1.0)
+        extract_cases(self.store.profile, store=self.store.root, db=self.fixture.db,
+                      corpus=self.corpus, now="2026-09-21T00:00:00+00:00")
+        self.case = self.corpus.cases(self.store.profile)[0]
+
+    def claim(self) -> dict:
+        return judgment_claim([DISTINCT.id, ALIASED.id], primary=ALIASED.id)
+
+    def decision(self, *, source: str = "jev", judgment: bool = True,
+                 session: str | None = None, request_sha256: str | None = None) -> RouteDecision:
+        return RouteDecision(
+            profile=self.store.profile,
+            session_id=self.case.session_id if session is None else session,
+            turn_id="live:ephemeral:turn",
+            outcome=TurnOutcome.GRANTED, reasons=(),
+            request_sha256=(self.case.request_sha256 if request_sha256 is None
+                            else request_sha256),
+            request_chars=len(self.case.request),
+            judgment=Judgment.from_record(self.claim()) if judgment else None,
+            judgment_source=source)
+
+    def test_the_decision_joins_by_request_hash_not_the_live_turn_id(self) -> None:
+        decision = self.decision()
+        self.assertIs(decision_for_case(self.case, [decision]), decision)
+
+    def test_a_decision_from_another_session_is_not_a_match(self) -> None:
+        with self.assertRaises(CorpusError):
+            decision_for_case(self.case, [self.decision(session="some-other-session")])
+
+    def test_a_case_without_a_request_hash_is_refused(self) -> None:
+        legacy = replace(self.case, request_sha256="")
+        with self.assertRaises(CorpusError):
+            decision_for_case(legacy, [self.decision()])
+
+    def test_a_decision_without_a_judgment_is_refused(self) -> None:
+        with self.assertRaises(CorpusError):
+            claim_from_decision(self.decision(judgment=False))
+
+    def test_the_claim_is_exactly_the_choice_the_validator_accepts(self) -> None:
+        claim = claim_from_decision(self.decision())
+        self.assertEqual(set(claim), CHOICE_KEYS)
+        self.assertEqual(claim, self.claim())
+
+
 class ThinProfileTest(unittest.TestCase):
     """A profile below the Stage 5 minimum is reported, never padded from another profile."""
 
@@ -541,6 +598,49 @@ class CorpusCliTest(unittest.TestCase):
         report = self.extract()
         self.assertEqual(report["reports"][0]["refused"], {"telegram": 1})
         self.assertEqual(len(list(CorpusStore(self.fixture.corpus).cases(self.store.profile))), 2)
+
+    def _second_case(self):
+        self.extract()
+        corpus = CorpusStore(self.fixture.corpus)
+        return next(c for c in corpus.cases(self.store.profile)
+                    if c.request == "a second request")
+
+    def _evidence(self, case, *, source: str) -> Path:
+        claim = judgment_claim([DISTINCT.id, ALIASED.id], primary=ALIASED.id)
+        decision = RouteDecision(
+            profile=self.store.profile, session_id=case.session_id, turn_id="live:ephemeral",
+            outcome=TurnOutcome.GRANTED, reasons=(),
+            request_sha256=case.request_sha256, request_chars=len(case.request),
+            judgment=Judgment.from_record(claim), judgment_source=source)
+        path = Path(self.fixture.corpus).parent / "route_decisions.jsonl"
+        path.write_text(json.dumps(decision.to_record()) + "\n", encoding="utf-8")
+        return path
+
+    def test_record_from_evidence_freezes_the_recorded_judgment(self) -> None:
+        case = self._second_case()
+        evidence = self._evidence(case, source="jev")
+        recorded = self.run_cli(
+            "record", "--profile", self.store.profile, "--case", case.case_sha256,
+            "--from-evidence", str(evidence), "--corpus", str(self.fixture.corpus),
+            "--recordings", str(self.fixture.recordings))
+        self.assertEqual(recorded["judgment_source"], "jev")
+        self.assertEqual(recorded["recording"]["case_sha256"], case.case_sha256)
+        self.assertTrue(RecordingStore(self.fixture.recordings)
+                        .path(self.store.profile, case.case_sha256).exists())
+
+    def test_record_from_evidence_refuses_a_non_jev_source(self) -> None:
+        case = self._second_case()
+        evidence = self._evidence(case, source="first_candidate")
+        buffer = io.StringIO()
+        with contextlib.redirect_stdout(buffer):
+            code = corpus_cli.main([
+                "record", "--profile", self.store.profile, "--case", case.case_sha256,
+                "--from-evidence", str(evidence), "--corpus", str(self.fixture.corpus),
+                "--recordings", str(self.fixture.recordings)])
+        self.assertEqual(code, 1)
+        self.assertIn("not live Jev", buffer.getvalue())
+        self.assertFalse(RecordingStore(self.fixture.recordings)
+                         .path(self.store.profile, case.case_sha256).exists())
 
 
 class CorpusRootBoundaryTest(unittest.TestCase):

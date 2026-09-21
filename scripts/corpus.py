@@ -10,12 +10,16 @@ to the committed ``corpus/`` tree. Every ``gh``-free, offline operation:
     python3 scripts/corpus.py status  --minimum 20
     python3 scripts/corpus.py review  --profile pilot --case <sha> --outcome local.some-skill
     python3 scripts/corpus.py record  --profile pilot --case <sha> --claim claim.json
+    python3 scripts/corpus.py record  --profile pilot --case <sha> \
+        --from-evidence ~/.hermes/skill-broker/route_decisions.jsonl
     python3 scripts/corpus.py purge   --profile pilot --source telegram
 
 ``extract`` refuses any source that has not opted in (ADR-0020): the agent-authored channels are
 consented by default, ``telegram`` and ``desktop`` need an explicit ``--consent``, and an
 unlisted source such as ``kanban`` needs one too. ``review`` writes only a label — never request
-text — and ``record`` freezes a Jev claim against its Case by content hash.
+text — and ``record`` freezes a Jev claim against its Case by content hash. ``record`` takes
+either a ``--claim`` file or ``--from-evidence``, which freezes the Judgment the live broker
+already recorded in the Evidence Log (matched to the Case by profile and correlation ids).
 """
 from __future__ import annotations
 
@@ -33,11 +37,15 @@ from broker.corpus import (  # noqa: E402
     CorpusStore,
     LabelStore,
     RecordingStore,
+    claim_from_decision,
+    decision_for_case,
     extract_cases,
     profile_status,
     retention_report,
     sessions_db,
 )
+from broker.jev import JevJudgmentSource  # noqa: E402
+from broker.report import load_route_decisions  # noqa: E402
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_LABELS = _REPO_ROOT / "corpus" / "labels"
@@ -86,7 +94,12 @@ def _parser() -> argparse.ArgumentParser:
     record = sub.add_parser("record", help="freeze a Jev claim against its Case by content hash")
     record.add_argument("--profile", required=True)
     record.add_argument("--case", required=True)
-    record.add_argument("--claim", type=Path, required=True, help="a JSON Jev Choice")
+    source = record.add_mutually_exclusive_group(required=True)
+    source.add_argument("--claim", type=Path, help="a JSON Jev Choice")
+    source.add_argument("--from-evidence", type=Path,
+                        help="an Evidence Log; freeze the Judgment it recorded for this Case")
+    record.add_argument("--any-source", action="store_true",
+                        help="with --from-evidence, allow a Judgment not answered by live Jev")
     record.add_argument("--corpus", type=Path, default=DEFAULT_CORPUS_ROOT)
     record.add_argument("--recordings", type=Path, default=DEFAULT_RECORDINGS)
 
@@ -160,9 +173,20 @@ def _record(args: argparse.Namespace) -> dict:
     case = corpus.get(args.profile, args.case)
     if case is None:
         raise ValueError(f"no case {args.case} for profile {args.profile!r}")
-    claim = json.loads(args.claim.read_text(encoding="utf-8"))
+    judgment_source = "claim"
+    if args.from_evidence is not None:
+        decision = decision_for_case(
+            case, load_route_decisions(args.from_evidence, profile=args.profile))
+        judgment_source = decision.judgment_source or "none"
+        if judgment_source != JevJudgmentSource.name and not args.any_source:
+            raise ValueError(
+                f"the Route Decision for {args.case} was answered by {judgment_source!r}, not "
+                "live Jev; pass --any-source to freeze it anyway")
+        claim = claim_from_decision(decision)
+    else:
+        claim = json.loads(args.claim.read_text(encoding="utf-8"))
     recording = RecordingStore(args.recordings).write(case, claim)
-    return {"ok": True, "recording": recording.to_record()}
+    return {"ok": True, "judgment_source": judgment_source, "recording": recording.to_record()}
 
 
 def _purge(args: argparse.Namespace) -> dict:
