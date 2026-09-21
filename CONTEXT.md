@@ -347,7 +347,10 @@ _Avoid_: dry run, test mode
 
 **Shadow Report**:
 The reviewed record of what the broker would have selected in Shadow Mode, compared against
-actual skill use and human review. Its review authorises enabling injection for a batch.
+actual skill use and human review. Precision and recall are measured against actual skill use;
+the review supplies the ground truth for a disagreement's attribution, not the metrics, so a
+Grant the agent never loaded is a false intervention (ADR-0024). Its review authorises enabling
+injection for a batch.
 _Avoid_: metrics dump, eval report
 
 ### The system

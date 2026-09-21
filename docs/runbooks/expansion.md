@@ -16,6 +16,12 @@ A second batch is enabled only on evidence the profile has not already reviewed:
 - **A fresh window** of replay or Shadow Mode traffic for the profile, recorded as Route Decisions
   in the Evidence Log. Fresh means a new observation window, not the one that admitted the
   running batch.
+- **Observed use, not the review, measures a Grant** (ADR-0024). The Report's precision and
+  recall are measured against the profile's actual `skill_view` use, so a live window must contain
+  turns in which the granted Skill is actually loaded, plus at least one genuine no-skill turn. A
+  window of plain inline-Pack turns (the agent follows the Pack without `skill_view`, which is the
+  normal post-Cutover case) reads as a precision regression and will not admit a batch — use
+  replay evidence for that batch instead. Never re-derive the Soft Thresholds to get past it.
 - **A reviewed Shadow Report** assembled from that window
   (`python3 scripts/shadow_report.py build --profile <profile> --since <epoch> --until <epoch>`),
   with every checked Hard Gate passing and no quality floor regressed.

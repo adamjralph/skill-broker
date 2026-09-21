@@ -221,6 +221,16 @@ class MeasurementTest(ReportTestCase):
         self.assertEqual(len(report.disagreements), 1)
         self.assertEqual(report.disagreements[0].attribution, CORRECT)
 
+    def test_the_review_reframes_the_disagreement_but_not_the_metrics(self) -> None:
+        """Observed use stays authoritative for the metric; the review only attributes (ADR-0024)."""
+        without = self.build(since=0.0, until=250.0)
+        reviewed = self.build(since=0.0, until=250.0,
+                              human_review={("s1", str(self.second)): ALIASED.id})
+
+        self.assertEqual(reviewed.metrics.to_record(), without.metrics.to_record())
+        self.assertLess(reviewed.metrics.precision, 1.0)
+        self.assertEqual(reviewed.disagreements[0].attribution, CORRECT)
+
     def test_a_review_for_a_ghost_skill_is_attributed_to_retrieval(self) -> None:
         missing = self.build(since=0.0, until=250.0,
                              human_review={("s1", str(self.second)): "local.ghost"})
