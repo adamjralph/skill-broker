@@ -23,27 +23,9 @@ library, and produces replayable evidence for every routing decision.
 
 ## Status
 
-Stages 1–4 are built and one Consumer is live. The Skill Broker's deterministic pipeline
-is implemented through ticket #55: the `prepare_turn` seam, Authorised Closure, Candidate
-Retrieval, Judgment validation and the Grant, Skill Pack assembly with Pack Delivery and
-duplicate suppression, the live Jev Judgment Source with its recorded/No-Skill fallback, the
-Hermes Adapter at the cache-safe seam in Shadow Mode, the machine-local Replay Corpus with
-Reviewed Cases and SHA-bound Recordings, the offline routing evaluation with its pre-registered
-Soft Thresholds, and the injection gate: the data-independent Hard Gates checked on every turn,
-fail-closed with a recorded Incident, and the per-batch injection switch. The Shadow Report and
-its batch review assemble recorded Route Decisions and observed skill use into the reviewed
-artifact whose review is the only thing that enables a batch. Injection stays off by default.
-The bounded pilot (#57) is rehearsed deterministically end to end — Cutover withholding and
-byte-exact rollback, a reviewed Shadow Report enabling exactly one batch, a real Hermes turn
-receiving a Pack, and duplicate suppression — without touching live Consumer state; the live
-enablement awaits the operator's reviewed shadow traffic. Measured expansion (#58) is built as a
-routine: one additive batch at a time, on fresh evidence with its own review, with the Soft
-Thresholds held (or re-derived only against a strictly larger corpus), the rollback rehearsed
-before enabling, the post-batch foundation-resolution and hash checks reported, and an open
-Incident failing expansion closed. The second batch is rehearsed end to end against the real
-store (`tests/hermes_adapter/run_expansion_proof.py`). Stage 9 retirement is defined (#23,
-ADR-0023): retirement is a reversible, batched archive gated on explicit approval, deletion is a
-separate purge, and execution stays blocked until every Consumer resolves through the store.
+Stages 1–8 are built; ten Consumers with skills are cut over to their Exposure Farms (`default-2` has no policy). The broker includes the deterministic routing pipeline, Hermes Adapter, replay/evaluation, review-gated injection and measured expansion. This is not a claim that injection is currently healthy for every Consumer; check the live gate state before enabling a batch.
+
+**Stage 9, 2026-09-26:** With Adam's one-time backup-first exception to ADR-0023's timing/paperwork gates, 123 overlapping skill paths across ten profile tiers were moved into a labelled reversible archive, not purged. Original profile trees were backed up and verified first (1,295 files and 25 symlinks); native Hermes resolution was checked after each profile (127 name checks, no missing or ambiguous names). The store remains canonical and unchanged profile-only skills stay in place. See [`docs/retirement/2026-09-26-preflight.md`](./docs/retirement/2026-09-26-preflight.md) and the per-profile journals in `/home/hermes/Documents/skill-backups/2026-09-26-profile-skills-before-stage9/`. The standard `scripts/retire.py` still enforces ADR-0023 for future batches; this one-time operation does not loosen it.
 
 Canonical documents:
 

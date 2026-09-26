@@ -61,10 +61,10 @@ record. A batch with no resolvable evidence fails validation rather than proceed
 
 ## What proposes candidates
 
-Deterministic tooling (`scripts/retire.py propose`, to be built with the first real batch) reads
+Deterministic tooling (`scripts/retire.py propose`; see `python3 scripts/retire.py --help` for the required exact-path, evidence-inventory and artifact inputs) reads
 the verified Store Manifest and the Stage 1 audit index and proposes four kinds:
 
-- **redundant-copy** — an exposure whose content is canonical elsewhere (the audit's 203);
+- **redundant-copy** — an exposure whose content is canonical elsewhere (count varies with the verified audit);
 - **dead-exposure** — a path no Consumer's farm or policy resolves any more;
 - **excluded-root** — a superseded old location left after cutover;
 - **zero-use-stale** — a store identity flagged by the audit's classification, with usage
@@ -122,7 +122,8 @@ A candidate (or the whole batch) is held when any of these is true:
 ```sh
 python3 scripts/store_manifest.py verify --store ~/skill-store
 python3 scripts/skill_audit.py --verify          # audit index re-check
-python3 scripts/retire.py propose --batch <name> # deterministic candidate proposal (Stage 9)
-python3 scripts/retire.py apply   --batch <name> # refused without a recorded approval
-python3 scripts/retire.py rollback --batch <name>
+python3 scripts/retire.py --help               # required paths and evidence inventory
+# propose/review/approve/apply/rollback require --batch; propose also requires
+# --store --audit --evidence --profile --path. Apply requires a committed,
+# digest-approved batch plus its committed companion report. No purge command exists.
 ```

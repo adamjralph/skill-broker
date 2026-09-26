@@ -59,6 +59,12 @@ PROFILE_DIVERGENCES_DISTINCT = RESOLVED_PROFILE_DIVERGENCES | {"hermes-agent", "
 # Stale profile copies of a shared-shelf skill: not identities, only older Versions of
 # the canonical `local.*` identity (ADR-0016).
 STALE_PROFILE_COPIES = {"adam-content-writing", "linkedin-post-writing"}
+# Reviewed, store-backed authored shelf identity; unrelated to the upstream
+# mattpocock.handoff despite sharing a Name. Do not reclassify it as a patch.
+DISTINCT_LOCAL_UPSTREAM_NAMES = {"handoff"}
+# Upstream optional research-paper-writing names skills not installed on this machine.
+# Keep them as explicit, known dangling references; do not infer installation.
+ACCEPTED_DANGLING_REFERENCES = {"data-science", "diagramming"}
 
 # Pseudo-owners whose content is Adam-authored (ADR-0017 licence convention).
 AUTHORED_OWNERS = {"local", "hermes_engineer", "life-os", "stillroom", "work"}
@@ -479,16 +485,17 @@ def main() -> int:
             for up in upstream_names.get(i["name"], []):
                 # ADR-0016: a profile deviation is profile-scoped, so it is a distinct
                 # identity, never a patch of the shared upstream identity.
-                resolved = i["owner"] == "hermes_engineer"
+                resolved = i["owner"] == "hermes_engineer" or (
+                    i["owner"] == "local" and i["name"] in DISTINCT_LOCAL_UPSTREAM_NAMES)
                 i["divergence_status"] = (
-                    "intentional profile deviation; distinct profile-scoped identity (ADR-0016)"
+                    "intentional authored identity; distinct from upstream (ADR-0016)"
                     if resolved else "unreconciled same-name divergence"
                 )
                 conflicts.append({
                     "kind": "possible-local-patch",
                     "id": i["id"],
                     "requires_decision": not resolved,
-                    "decision": "ADR-0016" if resolved else None,
+                    "decision": "ADR-0016: distinct store-backed authored identity" if resolved else None,
                     "detail": (f"same name as upstream {up}; could be a patched version of that "
                                f"identity or a distinct identity"),
                     "sources": [i["canonical_source"]],
@@ -505,10 +512,13 @@ def main() -> int:
     })
     dangling = sorted({d for i in identities for d in i["dangling_references"]})
     for d in dangling:
+        accepted = d in ACCEPTED_DANGLING_REFERENCES
         conflicts.append({
             "kind": "dangling-reference",
             "id": d,
-            "requires_decision": True,
+            "requires_decision": not accepted,
+            "decision": ("Known optional upstream reference, not installed; do not infer availability"
+                         if accepted else None),
             "detail": "referenced by skill bodies but present nowhere on the machine (intended skill or stale reference?)",
             "sources": [i["id"] for i in identities if d in i["dangling_references"]],
         })
